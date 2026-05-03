@@ -1,0 +1,40 @@
+{
+  "rules_text": {
+    "description": "盲盒活动说明",
+    "type": "text",
+    "default": "据行为心理学的‘可变比率强化’学说，不确定的任务和奖励能持续激发参与者的期待感。\n本期学习小组引入‘盲盒任务’机制：每小组每周可抽取一次盲盒任务，为一周的小组学习设置目标激励。\n\n小组完成盲盒任务后可以获得对应积分，这些积分可用于兑换精美奖品、评选优秀小组。"
+  },
+  "tasks": {
+    "description": "盲盒任务列表",
+    "type": "template_list",
+    "templates": {
+      "task": {
+        "name": "盲盒任务",
+        "hint": "每一项都是一个可抽取的任务，支持在 WebUI 中增删改分值和启用状态。",
+        "items": {
+          "category": {
+            "description": "任务分类",
+            "type": "string",
+            "default": "学习类",
+            "options": ["学习类", "体育类", "交流类", "吃喝类"]
+          },
+          "title": {
+            "description": "任务内容",
+            "type": "text",
+            "default": "自习地点抽签"
+          },
+          "points": {
+            "description": "建议积分",
+            "type": "int",
+            "default": 10
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BlindBox 管理页</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">AstrBot Plugin Dashboard</p>
+          <h1>BlindBox 小组管理页</h1>
+          <p class="lead">在这里管理南京大学行知 × 开甲学习小组的组长、成员、解散申请和本周盲盒。</p>
+        </div>
+        <div class="hero-card">
+          <div class="hero-card-title">当前状态</div>
+          <div id="stats" class="stats"></div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel panel--wide">
+          <div class="panel-head">
+            <h2>创建小组</h2>
+            <button id="refreshBtn" class="secondary">刷新</button>
+          </div>
+          <form id="createForm" class="form-grid">
+            <label>
+              <span>组序号</span>
+              <input name="group_no" placeholder="1" required />
+            </label>
+            <label>
+              <span>组名</span>
+              <input name="group_name" placeholder="行知×开甲" required />
+            </label>
+            <label class="full">
+              <span>QQ 列表（第一个是组长）</span>
+              <textarea name="qq_list" rows="3" placeholder="123456789, 234567890, 345678901"></textarea>
+            </label>
+            <div class="full actions-row">
+              <button type="submit">创建小组</button>
+              <span class="hint">成员之间可用逗号、空格或换行分隔。</span>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel panel--wide">
+          <div class="panel-head">
+            <h2>小组列表</h2>
+            <span id="statusBadge" class="badge">加载中</span>
+          </div>
+          <div id="groups" class="groups"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>任务内容仍可在插件配置页里编辑，当前页面主要负责小组与成员管理。</span>
+        <span id="message" class="message"></span>
+      </footer>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
