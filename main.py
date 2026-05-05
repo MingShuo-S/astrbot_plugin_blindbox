@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import shlex
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from random import choice
 from uuid import uuid4
 
-from quart import jsonify, request
+from quart import Response, jsonify, request
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -89,6 +91,11 @@ def _week_key(now: datetime | None = None) -> str:
     current = now or _now()
     iso = current.isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
+
+
+def _batch_id(now: datetime | None = None) -> str:
+    """生成批次ID，基于周数。每周一个新批次。"""
+    return _week_key(now)
 
 
 def _timestamp(now: datetime | None = None) -> str:
@@ -229,12 +236,24 @@ def _normalize_tasks(raw_tasks: object) -> list[dict[str, object]]:
     return tasks
 
 
-def _pick_task(category: str, tasks: list[dict[str, object]]) -> dict[str, object]:
+def _pick_task(
+    category: str, tasks: list[dict[str, object]], exclude_task: dict[str, object] | None = None
+) -> dict[str, object]:
     active_tasks = [task for task in tasks if task.get("enabled", True)]
     if category == "全部":
         active_tasks = [task for task in active_tasks if task["category"] in TASK_CATEGORIES]
     else:
         active_tasks = [task for task in active_tasks if task["category"] == category]
+
+    # 排除上一次抽到的任务，确保每次抽的内容不同
+    if exclude_task and isinstance(exclude_task, dict):
+        exclude_title = str(exclude_task.get("title", "")).strip()
+        exclude_category = str(exclude_task.get("category", "")).strip()
+        active_tasks = [
+            task
+            for task in active_tasks
+            if not (str(task.get("title", "")).strip() == exclude_title and str(task.get("category", "")).strip() == exclude_category)
+        ]
 
     if not active_tasks:
         raise ValueError("没有可用的盲盒任务，请先在插件配置里添加任务。")
@@ -319,12 +338,25 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/ai/groups", self.api_ai_groups, ["GET"], "AI 小组列表")
         context.register_web_api(f"/{PLUGIN_NAME}/ai/submissions", self.api_ai_submissions, ["GET"], "AI 提交记录")
         context.register_web_api(f"/{PLUGIN_NAME}/ai/review", self.api_ai_review, ["POST"], "AI 审核提交")
+        context.register_web_api(f"/{PLUGIN_NAME}/ai/prompt", self.api_ai_prompt, ["GET"], "AI 系统提示词")
         context.register_web_api(f"/{PLUGIN_NAME}/submit", self.api_submit, ["POST"], "提交小组任务材料")
         context.register_web_api(
             f"/{PLUGIN_NAME}/group/export-submissions",
             self.api_group_export_submissions,
             ["POST"],
             "导出小组提交记录",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/group/export-submissions-csv",
+            self.api_group_export_submissions_csv,
+            ["POST"],
+            "导出小组提交记录为CSV",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/group/export-submissions-all-csv",
+            self.api_group_export_all_submissions_csv,
+            ["POST"],
+            "导出全部小组提交记录为CSV",
         )
         context.register_web_api(f"/{PLUGIN_NAME}/group/create", self.api_group_create, ["POST"], "创建小组")
         context.register_web_api(f"/{PLUGIN_NAME}/group/add", self.api_group_add, ["POST"], "添加成员")
@@ -349,6 +381,8 @@ class BlindBoxPlugin(Star):
         )
         context.register_web_api(f"/{PLUGIN_NAME}/group/dissolve", self.api_group_dissolve, ["POST"], "解散小组")
         context.register_web_api(f"/{PLUGIN_NAME}/group/redraw", self.api_group_redraw, ["POST"], "重抽小组任务")
+        context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
+        context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
@@ -416,8 +450,17 @@ class BlindBoxPlugin(Star):
             for group_no, draw_data in draws.items():
                 if str(group_no) not in normalized_groups or not isinstance(draw_data, dict):
                     continue
+                current_batch = _batch_id()
+                last_batch = str(draw_data.get("batch_id", ""))
+                # 如果是旧批次（不同周），重置计数
+                if last_batch and last_batch != current_batch:
+                    draw_count = 0
+                else:
+                    draw_count = int(draw_data.get("draw_count", 0))
                 normalized_draws[str(group_no)] = {
                     "week": str(draw_data.get("week", "")),
+                    "batch_id": current_batch,
+                    "draw_count": draw_count,
                     "group_no": str(group_no),
                     "group_name": str(draw_data.get("group_name", "")),
                     "category": str(draw_data.get("category", "")),
@@ -475,6 +518,33 @@ class BlindBoxPlugin(Star):
     def _submission_file_path(self, group_no: str) -> Path:
         # 每个小组单独一个提交文件，方便导出和人工核查。
         return SUBMISSION_DIR / f"group_{group_no}.json"
+
+    @staticmethod
+    def _submission_record_to_csv_row(record: dict[str, object]) -> list[str]:
+        task_snapshot = record.get("task_snapshot", {})
+        task_snapshot_dict = task_snapshot if isinstance(task_snapshot, dict) else {}
+        task_snapshot_json = json.dumps(task_snapshot_dict, ensure_ascii=False) if task_snapshot_dict else "{}"
+        return [
+            str(record.get("submission_id", "")),
+            str(record.get("group_no", "")),
+            str(record.get("group_name", "")),
+            str(record.get("submitter_qq", "")),
+            str(record.get("source", "")),
+            str(record.get("week", "")),
+            str(record.get("review_status", "pending")),
+            str(record.get("review_reason", "")),
+            str(record.get("reviewer", "")),
+            str(record.get("reviewed_at", "")),
+            str(int(record.get("awarded_points", 0))),
+            str(bool(record.get("score_applied", False))),
+            str(record.get("submitted_at", "")),
+            str(task_snapshot_dict.get("category", "")),
+            str(task_snapshot_dict.get("title", "")),
+            str(task_snapshot_dict.get("points", 0)),
+            "|".join(_parse_qq_list(record.get("image_urls", []))),
+            str(record.get("materials_text", "")),
+            task_snapshot_json,
+        ]
 
     def _load_submission_records(self, group_no: str) -> list[dict[str, object]]:
         path = self._submission_file_path(group_no)
@@ -608,10 +678,40 @@ class BlindBoxPlugin(Star):
             "current_task": current_task,
             "current_task_points": int(current_task.get("points", 0)) if isinstance(current_task, dict) else 0,
             "current_task_week": str(current_task.get("week", "")) if isinstance(current_task, dict) else "",
+            "current_task_batch": str(current_task.get("batch_id", "")) if isinstance(current_task, dict) else "",
+            "current_task_draw_count": int(current_task.get("draw_count", 0)) if isinstance(current_task, dict) else 0,
             "submission_count": len(submissions),
             "pending_submission_count": len(pending_submissions),
             "pending_submissions": pending_submissions,
         }
+    
+    def _build_ai_prompt_context(self) -> str:
+        """生成给 AI 的系统提示词，包含插件功能说明。"""
+        return (
+            "你是南京大学行知×开甲学习小组的盲盒任务审核助手。\n\n"
+            "【插件功能说明】\n"
+            "- 本插件管理学习小组的'盲盒任务'机制\n"
+            "- 每个小组每周可以抽取 1-3 次任务（同一批次上限 3 次）\n"
+            "- 任务分为四类：学习类、体育类、交流类、吃喝类\n"
+            "- 每个任务都附带建议积分\n\n"
+            "【你的职责】\n"
+            "1. 根据小组提交的材料和当前分配的任务进行审核\n"
+            "2. 判断提交内容是否满足任务要求\n"
+            "3. 作出审核决定（通过/拒绝）并可选择调整积分\n"
+            "4. 提供审核意见或拒绝理由\n\n"
+            "【审核建议】\n"
+            "- 学习类任务：检查是否提供了实质性的学习内容或交流\n"
+            "- 体育类任务：验证运动相关的证据或截图\n"
+            "- 交流类任务：确认小组成员的参与和互动\n"
+            "- 吃喝类任务：看小组聚餐的证明（照片/截图）\n\n"
+            "【操作指令】\n"
+            "/blindbox - 抽取任务\n"
+            "/blindbox 学习/体育/交流/吃喝 - 指定分类抽取\n"
+            "/blindbox group list - 查看所有小组\n"
+            "/blindbox group info <序号> - 查看小组详情\n"
+            "/blindbox submit <说明> - 提交任务材料\n\n"
+            "祝审核顺利！"
+        )
 
     def _group_has_member(self, group_data: dict[str, object], qq: str) -> bool:
         members = group_data.get("members", [])
@@ -794,7 +894,7 @@ class BlindBoxPlugin(Star):
         category: str,
         force_redraw: bool,
         actor_qq: str | None = None,
-    ) -> tuple[dict[str, object], bool]:
+    ) -> tuple[dict[str, object], bool, str]:
         state = await self._get_state()
         groups = state.get("groups", {})
         draws = state.setdefault("draws", {})
@@ -814,14 +914,35 @@ class BlindBoxPlugin(Star):
             raise ValueError("可用分类只有：学习类、体育类、交流类、吃喝类、全部。")
 
         week = _week_key()
+        current_batch = _batch_id()
         current_draw = draws.get(str(group_no))
-        if not force_redraw and isinstance(current_draw, dict) and current_draw.get("week") == week:
-            return current_draw, False
-
+        
+        # 检查本批次是否已经抽了3次（仅在非强制重抽时检查）
+        if not force_redraw and isinstance(current_draw, dict):
+            if current_draw.get("week") == week and current_draw.get("batch_id") == current_batch:
+                draw_count = int(current_draw.get("draw_count", 0))
+                if draw_count >= 3:
+                    raise ValueError(f"本批次（{current_batch}）已经抽取了 {draw_count} 次，达到上限 3 次。")
+                # 本周已有任务，返回当前任务
+                return current_draw, False, ""
+        
         tasks = _normalize_tasks(self.config.get("tasks", DEFAULT_TASKS))
-        picked = _pick_task(normalized_category, tasks)
+        # 排除上一次抽到的任务
+        exclude_task = current_draw if isinstance(current_draw, dict) else None
+        picked = _pick_task(normalized_category, tasks, exclude_task=exclude_task)
+        
+        # 计算新的抽取次数
+        if force_redraw or not isinstance(current_draw, dict) or current_draw.get("batch_id") != current_batch:
+            # 强制重抽或切换批次，重置计数
+            new_draw_count = 1
+        else:
+            # 同批次继续抽取
+            new_draw_count = int(current_draw.get("draw_count", 0)) + 1
+        
         draw_data = {
             "week": week,
+            "batch_id": current_batch,
+            "draw_count": new_draw_count,
             "group_no": str(group_no),
             "group_name": str(group_data.get("group_name", "")),
             "category": str(picked["category"]),
@@ -831,7 +952,8 @@ class BlindBoxPlugin(Star):
         }
         draws[str(group_no)] = draw_data
         await self._save_state()
-        return draw_data, True
+        status_msg = f"(本批次第 {new_draw_count}/3 次抽取)" if new_draw_count <= 3 else ""
+        return draw_data, True, status_msg
 
     async def _api_result(self, handler):
         try:
@@ -951,6 +1073,154 @@ class BlindBoxPlugin(Star):
             return export_data
 
         return await self._api_result(_handler)
+
+    async def api_group_export_submissions_csv(self):
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+
+            group_data = await self._ensure_group_or_raise(group_no)
+            records = self._load_submission_records(group_no)
+
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow([
+                "submission_id",
+                "group_no",
+                "group_name",
+                "submitter_qq",
+                "source",
+                "week",
+                "review_status",
+                "review_reason",
+                "reviewer",
+                "reviewed_at",
+                "awarded_points",
+                "score_applied",
+                "submitted_at",
+                "task_category",
+                "task_title",
+                "task_points",
+                "image_urls",
+                "materials_text",
+                "task_snapshot_json",
+            ])
+
+            for record in records:
+                if isinstance(record, dict):
+                    writer.writerow(self._submission_record_to_csv_row(record))
+
+            csv_text = csv_buffer.getvalue()
+            filename = f"blindbox_group_{group_no}_submissions.csv"
+            return Response(
+                "\ufeff" + csv_text,
+                content_type="text/csv; charset=utf-8",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Group-No": group_no,
+                    "X-Group-Name": str(group_data.get("group_name", "")),
+                    "X-Record-Count": str(len(records)),
+                },
+            )
+
+        try:
+            return await _handler()
+        except ValueError as exc:
+            return self._json_error(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("blindbox api error")
+            return self._json_error(f"内部错误：{exc}")
+
+    async def api_group_export_all_submissions_csv(self):
+        async def _handler():
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            draws = state.get("draws", {})
+            if not isinstance(groups, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow([
+                "group_no",
+                "group_name",
+                "leader_qq",
+                "submission_id",
+                "submitter_qq",
+                "source",
+                "week",
+                "review_status",
+                "review_reason",
+                "reviewer",
+                "reviewed_at",
+                "awarded_points",
+                "score_applied",
+                "submitted_at",
+                "task_category",
+                "task_title",
+                "task_points",
+                "image_urls",
+                "materials_text",
+                "task_snapshot_json",
+            ])
+
+            total_records = 0
+            for group_no in sorted(groups.keys(), key=str):
+                group_data = groups[group_no]
+                if not isinstance(group_data, dict):
+                    continue
+                group_no_str = str(group_no)
+                submissions = self._load_submission_records(group_no_str)
+                _ = draws.get(group_no_str) if isinstance(draws, dict) else None
+                for record in submissions:
+                    if not isinstance(record, dict):
+                        continue
+                    task_snapshot = record.get("task_snapshot", {})
+                    task_snapshot_dict = task_snapshot if isinstance(task_snapshot, dict) else {}
+                    writer.writerow([
+                        group_no_str,
+                        str(group_data.get("group_name", "")),
+                        str(group_data.get("leader_qq", "")),
+                        str(record.get("submission_id", "")),
+                        str(record.get("submitter_qq", "")),
+                        str(record.get("source", "")),
+                        str(record.get("week", "")),
+                        str(record.get("review_status", "pending")),
+                        str(record.get("review_reason", "")),
+                        str(record.get("reviewer", "")),
+                        str(record.get("reviewed_at", "")),
+                        str(int(record.get("awarded_points", 0))),
+                        str(bool(record.get("score_applied", False))),
+                        str(record.get("submitted_at", "")),
+                        str(task_snapshot_dict.get("category", "")),
+                        str(task_snapshot_dict.get("title", "")),
+                        str(task_snapshot_dict.get("points", 0)),
+                        "|".join(_parse_qq_list(record.get("image_urls", []))),
+                        str(record.get("materials_text", "")),
+                        json.dumps(task_snapshot_dict, ensure_ascii=False) if task_snapshot_dict else "{}",
+                    ])
+                    total_records += 1
+
+            filename = f"blindbox_all_groups_submissions_{_week_key()}.csv"
+            return Response(
+                "\ufeff" + csv_buffer.getvalue(),
+                content_type="text/csv; charset=utf-8",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Record-Count": str(total_records),
+                },
+            )
+
+        try:
+            return await _handler()
+        except ValueError as exc:
+            return self._json_error(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("blindbox api error")
+            return self._json_error(f"内部错误：{exc}")
 
     async def api_ai_review(self):
         payload = await self._get_request_json()
@@ -1136,10 +1406,134 @@ class BlindBoxPlugin(Star):
         actor_qq = str(payload.get("actor_qq", "")).strip() or None
 
         async def _handler():
-            draw_data, created_new = await self._draw_for_group(group_no, category, force_redraw, actor_qq=actor_qq)
+            draw_data, created_new, status_msg = await self._draw_for_group(group_no, category, force_redraw, actor_qq=actor_qq)
             draw_data["created_new"] = created_new
+            draw_data["status_message"] = status_msg
             return draw_data
 
+        return await self._api_result(_handler)
+    
+    async def api_ai_prompt(self):
+        """返回给 AI 的系统提示词。"""
+        async def _handler():
+            return {"prompt": self._build_ai_prompt_context()}
+        return await self._api_result(_handler)
+    
+    async def api_group_export_csv(self):
+        """导出小组列表为 CSV 格式。"""
+        async def _handler():
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            if not isinstance(groups, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+            
+            # 生成 CSV
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(["序号", "组名", "组长QQ", "成员QQ列表"])
+            
+            for group_no in sorted(groups.keys(), key=str):
+                group_data = groups[group_no]
+                if not isinstance(group_data, dict):
+                    continue
+                group_no_str = str(group_no)
+                group_name = str(group_data.get("group_name", ""))
+                leader_qq = str(group_data.get("leader_qq", ""))
+                members = group_data.get("members", [])
+                members_str = ",".join(str(m) for m in members) if isinstance(members, list) else ""
+                
+                writer.writerow([group_no_str, group_name, leader_qq, members_str])
+            
+            csv_content = csv_buffer.getvalue()
+            return {"csv": csv_content, "filename": "blindbox_groups.csv"}
+        
+        return await self._api_result(_handler)
+    
+    async def api_group_import_csv(self):
+        """从 CSV 导入小组列表。覆盖已有小组。"""
+        payload = await self._get_request_json()
+        csv_content = str(payload.get("csv", "")).strip()
+        
+        async def _handler():
+            if not csv_content:
+                raise ValueError("CSV 内容不能为空。")
+            
+            # 解析 CSV
+            csv_buffer = StringIO(csv_content)
+            reader = csv.DictReader(csv_buffer)
+            rows = list(reader)
+            
+            if not rows:
+                raise ValueError("CSV 文件为空或格式错误。")
+            
+            state = await self._get_state()
+            groups = state.setdefault("groups", {})
+            member_to_group = state.setdefault("member_to_group", {})
+            
+            # 先清空现有映射（仅清除 CSV 中提到的小组对应的成员）
+            new_groups: dict[str, object] = {}
+            new_member_to_group: dict[str, str] = {}
+            
+            # 处理 CSV 中的每一行
+            import_count = 0
+            errors: list[str] = []
+            
+            for row in rows:
+                group_no = str(row.get("序号", "")).strip()
+                group_name = str(row.get("组名", "")).strip()
+                leader_qq = str(row.get("组长QQ", "")).strip()
+                members_str = str(row.get("成员QQ列表", "")).strip()
+                
+                if not group_no or not group_name or not leader_qq:
+                    errors.append(f"行 {row} 缺少必要字段（序号/组名/组长QQ）。")
+                    continue
+                
+                # 解析成员列表
+                members = [m.strip() for m in members_str.split(",") if m.strip()] if members_str else []
+                
+                # 确保组长在成员列表中
+                if leader_qq not in members:
+                    members.insert(0, leader_qq)
+                
+                group_data = {
+                    "group_no": group_no,
+                    "group_name": group_name,
+                    "leader_qq": leader_qq,
+                    "members": members,
+                    "dissolve_requested": False,
+                    "score_total": 0,
+                }
+                new_groups[group_no] = group_data
+                
+                for member in members:
+                    new_member_to_group[member] = group_no
+                
+                import_count += 1
+            
+            # 更新状态：只替换涉及的小组，保留其他小组
+            for group_no in list(groups.keys()):
+                if group_no not in new_groups:
+                    # 保留原有的其他小组
+                    new_groups[group_no] = groups[group_no]
+                    members = groups[group_no].get("members", [])
+                    if isinstance(members, list):
+                        for member in members:
+                            new_member_to_group[member] = group_no
+            
+            state["groups"] = new_groups
+            state["member_to_group"] = new_member_to_group
+            await self._save_state()
+            
+            result = {
+                "success": True,
+                "import_count": import_count,
+                "errors": errors,
+                "message": f"成功导入 {import_count} 个小组。"
+            }
+            if errors:
+                result["message"] += f"有 {len(errors)} 行出错。"
+            return result
+        
         return await self._api_result(_handler)
 
     # ----------------------------
@@ -1381,7 +1775,7 @@ class BlindBoxPlugin(Star):
             return
 
         category = args[0] if args else "全部"
-        draw_data, created_new = await self._draw_for_group(group_no, category, force_redraw, actor_qq=sender_id)
+        draw_data, created_new, status_msg = await self._draw_for_group(group_no, category, force_redraw, actor_qq=sender_id)
         rules_text = str(self.config.get("rules_text", DEFAULT_RULES_TEXT))
         task = {
             "category": draw_data.get("category", ""),
@@ -1396,6 +1790,8 @@ class BlindBoxPlugin(Star):
             f"组长：{group_data.get('leader_qq', '')}",
             f"本周抽取状态：{draw_data.get('week', '')}",
         ]
+        if status_msg:
+            lines.append(status_msg)
         if force_redraw:
             lines.append("本次操作：重抽并覆盖本周任务")
         elif not created_new:
