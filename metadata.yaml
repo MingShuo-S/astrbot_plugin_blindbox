@@ -1,9 +1,9 @@
 name: astrbot_plugin_blindbox
 author: YourName
 version: 0.6.2
+repo: https://github.com/MingShuo-S/astrbot_plugin_blindbox.git
 desc: 南京大学行知×开甲学习小组抽奖盲盒，支持 WebUI 管理小组与任务
 short_desc: WebUI 管理的小组抽奖盲盒
 support_platforms:
-  - telegram
-  - discord
+  - qq_official
 astrbot_version: ">=4.16,<5"

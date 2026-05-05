@@ -20,8 +20,21 @@ from astrbot.core.message.components import At, BaseMessageComponent, Image, Pla
 
 PLUGIN_NAME = "astrbot_plugin_blindbox"
 KV_STATE_KEY = "blindbox_state"
-RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
-SUBMISSION_DIR = RUNTIME_DIR / "submissions"
+
+
+def _resolve_data_root() -> Path:
+    current_dir = Path(__file__).resolve().parent
+    for ancestor in [current_dir, *current_dir.parents]:
+        data_dir = ancestor / "data"
+        if data_dir.is_dir():
+            return data_dir / "plugins" / PLUGIN_NAME
+    return current_dir / "data" / "plugins" / PLUGIN_NAME
+
+
+DATA_ROOT_DIR = _resolve_data_root()
+SUBMISSION_DIR = DATA_ROOT_DIR / "submissions"
+LEGACY_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+LEGACY_SUBMISSION_DIR = LEGACY_RUNTIME_DIR / "submissions"
 
 # 默认规则和任务池，WebUI 里的配置会覆盖这里的内容。
 DEFAULT_RULES_TEXT = (
@@ -519,6 +532,9 @@ class BlindBoxPlugin(Star):
         # 每个小组单独一个提交文件，方便导出和人工核查。
         return SUBMISSION_DIR / f"group_{group_no}.json"
 
+    def _legacy_submission_file_path(self, group_no: str) -> Path:
+        return LEGACY_SUBMISSION_DIR / f"group_{group_no}.json"
+
     @staticmethod
     def _submission_record_to_csv_row(record: dict[str, object]) -> list[str]:
         task_snapshot = record.get("task_snapshot", {})
@@ -548,7 +564,9 @@ class BlindBoxPlugin(Star):
 
     def _load_submission_records(self, group_no: str) -> list[dict[str, object]]:
         path = self._submission_file_path(group_no)
-        raw_records = _safe_json_load(path, [])
+        legacy_path = self._legacy_submission_file_path(group_no)
+        source_path = path if path.exists() else legacy_path if legacy_path.exists() else path
+        raw_records = _safe_json_load(source_path, [])
         if not isinstance(raw_records, list):
             return []
 
@@ -584,6 +602,8 @@ class BlindBoxPlugin(Star):
                         "submitted_at": str(record.get("submitted_at", "")),
                     }
                 )
+        if source_path == legacy_path and path != legacy_path:
+            _safe_json_dump(path, records)
         return records
 
     def _save_submission_records(self, group_no: str, records: list[dict[str, object]]) -> None:
