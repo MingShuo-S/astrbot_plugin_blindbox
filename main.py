@@ -25,9 +25,10 @@ from astrbot.core.message.components import (
     At,
     BaseMessageComponent,
     Image,
-    Plain,
-    MessageChain,  # 新增导入
 )
+)
+
+from astrbot.api.message_components import MessageChain, Plain
 
 
 PLUGIN_NAME = "astrbot_plugin_blindbox"
