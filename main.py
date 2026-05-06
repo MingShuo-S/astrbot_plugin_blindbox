@@ -8,6 +8,7 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from random import choice
+from typing import Any
 from uuid import uuid4
 
 from pydantic import Field
@@ -344,7 +345,7 @@ def _format_help() -> str:
 class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
     """获取待审核提交的AI工具"""
     
-    plugin_instance: object = None  # 存储插件实例
+    plugin_instance: Any = None  # 存储插件实例
     name: str = "blindbox_get_submissions"
     description: str = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
     parameters: dict = Field(
@@ -387,7 +388,7 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
 class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
     """获取审核指南的AI工具"""
     
-    plugin_instance: object = None  # 存储插件实例
+    plugin_instance: Any = None  # 存储插件实例
     name: str = "blindbox_get_prompt"
     description: str = "获取审核指南和标准，包含所有审核信息和要求"
     parameters: dict = Field(
@@ -408,7 +409,7 @@ class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
 class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
     """提交审核结果的AI工具"""
     
-    plugin_instance: object = None  # 存储插件实例
+    plugin_instance: Any = None  # 存储插件实例
     name: str = "blindbox_review_submission"
     description: str = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
     parameters: dict = Field(
@@ -2292,9 +2293,9 @@ class BlindBoxPlugin(Star):
                 prompt=prompt,
                 system_prompt=self._build_ai_prompt_context(),
                 tools=ToolSet([
-                    BlindboxGetSubmissionsTool(self),
-                    BlindboxGetPromptTool(self),
-                    BlindboxReviewSubmissionTool(self),
+                    BlindboxGetSubmissionsTool(plugin_instance=self),
+                    BlindboxGetPromptTool(plugin_instance=self),
+                    BlindboxReviewSubmissionTool(plugin_instance=self),
                 ]),
                 max_steps=10,
             )
