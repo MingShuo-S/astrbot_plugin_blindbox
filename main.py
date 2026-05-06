@@ -345,12 +345,9 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
     
     def __init__(self, plugin_instance):
         self.plugin = plugin_instance
-        super().__init__()
-    
-    name: str = "blindbox_get_submissions"
-    description: str = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
-    parameters: dict = Field(
-        default_factory=lambda: {
+        self.name = "blindbox_get_submissions"
+        self.description = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
+        self.parameters = {
             "type": "object",
             "properties": {
                 "group_no": {
@@ -360,7 +357,7 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
             },
             "required": ["group_no"],
         }
-    )
+        super().__init__()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -390,17 +387,14 @@ class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
     
     def __init__(self, plugin_instance):
         self.plugin = plugin_instance
-        super().__init__()
-    
-    name: str = "blindbox_get_prompt"
-    description: str = "获取审核指南和标准，包含所有审核信息和要求"
-    parameters: dict = Field(
-        default_factory=lambda: {
+        self.name = "blindbox_get_prompt"
+        self.description = "获取审核指南和标准，包含所有审核信息和要求"
+        self.parameters = {
             "type": "object",
             "properties": {},
             "required": [],
         }
-    )
+        super().__init__()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -413,12 +407,9 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
     
     def __init__(self, plugin_instance):
         self.plugin = plugin_instance
-        super().__init__()
-    
-    name: str = "blindbox_review_submission"
-    description: str = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
-    parameters: dict = Field(
-        default_factory=lambda: {
+        self.name = "blindbox_review_submission"
+        self.description = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
+        self.parameters = {
             "type": "object",
             "properties": {
                 "group_no": {
@@ -444,7 +435,7 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
             },
             "required": ["group_no", "submission_id", "verdict"],
         }
-    )
+        super().__init__()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
