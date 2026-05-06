@@ -400,6 +400,68 @@ class BlindBoxPlugin(Star):
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
         await self._load_state()
+        # 如果 KV 中没有小组数据，则尝试从插件配置导入 `groups`（支持配置中的列表或 JSON 文本）
+        try:
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            if (not isinstance(groups, dict)) or (isinstance(groups, dict) and not groups):
+                # 优先支持结构化配置 `groups`（如果用户通过 conf_schema 提供了结构化数据）
+                cfg_groups = self.config.get("groups") if isinstance(self.config, dict) else None
+                raw_json = self.config.get("groups_json") if isinstance(self.config, dict) else None
+                parsed = None
+                if isinstance(cfg_groups, list) and cfg_groups:
+                    parsed = cfg_groups
+                elif isinstance(raw_json, str) and raw_json.strip():
+                    try:
+                        parsed = json.loads(raw_json)
+                    except Exception:
+                        parsed = None
+
+                if parsed:
+                    normalized_groups: dict[str, object] = {}
+                    member_to_group: dict[str, str] = {}
+                    # 支持两种格式：数组或对象
+                    if isinstance(parsed, dict):
+                        items = parsed.items()
+                    elif isinstance(parsed, list):
+                        items = []
+                        for entry in parsed:
+                            if isinstance(entry, dict):
+                                key = str(entry.get("group_no", "")).strip() or str(uuid4().hex)[:8]
+                                items.append((key, entry))
+                    else:
+                        items = []
+
+                    for group_no, group_data in items:
+                        if not isinstance(group_data, dict):
+                            continue
+                        members = _unique_strings(group_data.get("members", []))
+                        leader = str(group_data.get("leader_qq", "")).strip()
+                        if not leader and members:
+                            leader = members[0]
+                        if leader and leader not in members:
+                            members.insert(0, leader)
+                        if not members:
+                            continue
+                        normalized_group = {
+                            "group_no": str(group_no),
+                            "group_name": str(group_data.get("group_name", "")).strip(),
+                            "leader_qq": leader,
+                            "members": members,
+                            "dissolve_requested": bool(group_data.get("dissolve_requested", False)),
+                            "score_total": int(group_data.get("score_total", 0)),
+                        }
+                        normalized_groups[str(group_no)] = normalized_group
+                        for member_id in members:
+                            member_to_group[member_id] = str(group_no)
+
+                    if normalized_groups:
+                        state["groups"] = normalized_groups
+                        state["member_to_group"] = member_to_group
+                        await self.put_kv_data(KV_STATE_KEY, state)
+                        self._state = state
+        except Exception:
+            logger.exception("导入配置中的小组数据失败")
 
     # ----------------------------
     # 状态读写：KV 里保存小组、映射和抽取结果
@@ -732,6 +794,8 @@ class BlindBoxPlugin(Star):
             "/blindbox submit <说明> - 提交任务材料\n\n"
             "祝审核顺利！"
         )
+        # 明确告知模型不要以函数调用或工具调用的形式输出内容，避免被运行时当作工具调用解析。
+        # 例如：不要生成 function_call、不要返回带有 name/arguments 的结构体，只返回文本或规范化 JSON。
 
     def _group_has_member(self, group_data: dict[str, object], qq: str) -> bool:
         members = group_data.get("members", [])
