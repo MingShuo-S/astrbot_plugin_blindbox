@@ -368,7 +368,7 @@ class BlindBoxPlugin(Star):
         context.register_web_api(
             f"/{PLUGIN_NAME}/group/export-submissions-all-csv",
             self.api_group_export_all_submissions_csv,
-            ["POST"],
+            ["GET", "POST"],
             "导出全部小组提交记录为CSV",
         )
         context.register_web_api(f"/{PLUGIN_NAME}/group/create", self.api_group_create, ["POST"], "创建小组")
