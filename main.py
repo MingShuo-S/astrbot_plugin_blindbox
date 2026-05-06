@@ -340,14 +340,15 @@ def _format_help() -> str:
 # AI Tool 定义
 # ----------------------------
 
+@dataclass
 class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
     """获取待审核提交的AI工具"""
     
-    def __init__(self, plugin_instance):
-        self.plugin = plugin_instance
-        self.name = "blindbox_get_submissions"
-        self.description = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
-        self.parameters = {
+    plugin_instance: object = None  # 存储插件实例
+    name: str = "blindbox_get_submissions"
+    description: str = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
+    parameters: dict = Field(
+        default_factory=lambda: {
             "type": "object",
             "properties": {
                 "group_no": {
@@ -357,7 +358,7 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
             },
             "required": ["group_no"],
         }
-        super().__init__()
+    )
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -367,8 +368,8 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
             return ToolExecResult(error="group_no 不能为空")
         
         try:
-            group_data = await self.plugin._ensure_group_or_raise(group_no)
-            records = self.plugin._load_submission_records(group_no)
+            group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
+            records = self.plugin_instance._load_submission_records(group_no)
             pending = [r for r in records if r.get("review_status") == "pending"]
             return ToolExecResult(
                 data={
@@ -382,34 +383,36 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
             return ToolExecResult(error=str(e))
 
 
+@dataclass
 class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
     """获取审核指南的AI工具"""
     
-    def __init__(self, plugin_instance):
-        self.plugin = plugin_instance
-        self.name = "blindbox_get_prompt"
-        self.description = "获取审核指南和标准，包含所有审核信息和要求"
-        self.parameters = {
+    plugin_instance: object = None  # 存储插件实例
+    name: str = "blindbox_get_prompt"
+    description: str = "获取审核指南和标准，包含所有审核信息和要求"
+    parameters: dict = Field(
+        default_factory=lambda: {
             "type": "object",
             "properties": {},
             "required": [],
         }
-        super().__init__()
+    )
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        return ToolExecResult(data={"prompt": self.plugin._build_ai_prompt_context()})
+        return ToolExecResult(data={"prompt": self.plugin_instance._build_ai_prompt_context()})
 
 
+@dataclass
 class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
     """提交审核结果的AI工具"""
     
-    def __init__(self, plugin_instance):
-        self.plugin = plugin_instance
-        self.name = "blindbox_review_submission"
-        self.description = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
-        self.parameters = {
+    plugin_instance: object = None  # 存储插件实例
+    name: str = "blindbox_review_submission"
+    description: str = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
+    parameters: dict = Field(
+        default_factory=lambda: {
             "type": "object",
             "properties": {
                 "group_no": {
@@ -435,7 +438,7 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
             },
             "required": ["group_no", "submission_id", "verdict"],
         }
-        super().__init__()
+    )
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -452,10 +455,10 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
             if not submission_id:
                 raise ValueError("submission_id 不能为空")
             
-            group_data = await self.plugin._ensure_group_or_raise(group_no)
-            current_draws = await self.plugin._get_state()
+            group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
+            current_draws = await self.plugin_instance._get_state()
             draw_data = current_draws.get("draws", {}).get(group_no) if isinstance(current_draws.get("draws", {}), dict) else None
-            records = self.plugin._load_submission_records(group_no)
+            records = self.plugin_instance._load_submission_records(group_no)
 
             target_record = None
             for record in records:
@@ -494,8 +497,8 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
             if approved:
                 group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
 
-            self.plugin._save_submission_records(group_no, records)
-            await self.plugin._save_state()
+            self.plugin_instance._save_submission_records(group_no, records)
+            await self.plugin_instance._save_state()
             
             return ToolExecResult(
                 data={
@@ -525,10 +528,11 @@ class BlindBoxPlugin(Star):
         self._pending_reviews: dict[str, tuple[str, dict]] = {}
         
         # 注册AI工具
+        # 创建工具实例并注册
         self.context.add_llm_tools(
-            BlindboxGetSubmissionsTool(self),
-            BlindboxGetPromptTool(self),
-            BlindboxReviewSubmissionTool(self),
+            BlindboxGetSubmissionsTool(plugin_instance=self),
+            BlindboxGetPromptTool(plugin_instance=self),
+            BlindboxReviewSubmissionTool(plugin_instance=self),
         )
         
         self._register_web_apis(context)
