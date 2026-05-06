@@ -26,7 +26,7 @@ from astrbot.core.message.components import (
     BaseMessageComponent,
     Image,
 )
-)
+
 
 from astrbot.api.message_components import MessageChain, Plain
 
