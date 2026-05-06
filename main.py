@@ -21,7 +21,13 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult, ToolSet
 from astrbot.core.astr_agent_context import AstrAgentContext
-from astrbot.core.message.components import At, BaseMessageComponent, Image, Plain
+from astrbot.core.message.components import (
+    At,
+    BaseMessageComponent,
+    Image,
+    Plain,
+    MessageChain,  # 新增导入
+)
 
 
 PLUGIN_NAME = "astrbot_plugin_blindbox"
@@ -363,25 +369,23 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
-    ) -> ToolExecResult:
+    ) -> dict | str:
         group_no = str(kwargs.get("group_no", "")).strip()
         if not group_no:
-            return ToolExecResult(error="group_no 不能为空")
+            return {"error": "group_no 不能为空"}
         
         try:
             group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
             records = self.plugin_instance._load_submission_records(group_no)
             pending = [r for r in records if r.get("review_status") == "pending"]
-            return ToolExecResult(
-                data={
-                    "group_no": group_no,
-                    "group_name": group_data.get("group_name", ""),
-                    "pending_count": len(pending),
-                    "submissions": pending,
-                }
-            )
+            return {
+                "group_no": group_no,
+                "group_name": group_data.get("group_name", ""),
+                "pending_count": len(pending),
+                "submissions": pending,
+            }
         except Exception as e:
-            return ToolExecResult(error=str(e))
+            return {"error": str(e)}
 
 
 @dataclass
@@ -401,8 +405,8 @@ class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
-    ) -> ToolExecResult:
-        return ToolExecResult(data={"prompt": self.plugin_instance._build_ai_prompt_context()})
+    ) -> dict | str:
+        return {"prompt": self.plugin_instance._build_ai_prompt_context()}
 
 
 @dataclass
@@ -443,7 +447,7 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
-    ) -> ToolExecResult:
+    ) -> dict | str:
         group_no = str(kwargs.get("group_no", "")).strip()
         submission_id = str(kwargs.get("submission_id", "")).strip()
         verdict = str(kwargs.get("verdict", "")).strip().lower()
@@ -501,16 +505,14 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
             self.plugin_instance._save_submission_records(group_no, records)
             await self.plugin_instance._save_state()
             
-            return ToolExecResult(
-                data={
-                    "success": True,
-                    "group": group_data,
-                    "submission": target_record,
-                    "approved": approved,
-                }
-            )
+            return {
+                "success": True,
+                "group": group_data,
+                "submission": target_record,
+                "approved": approved,
+            }
         except Exception as e:
-            return ToolExecResult(error=str(e))
+            return {"error": str(e)}
 
 
 # ----------------------------
@@ -2301,13 +2303,20 @@ class BlindBoxPlugin(Star):
             )
             
             # 向群里报告AI审核结果
-            result_msg = f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n{llm_resp.completion_text}\n\n" \
-                        f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
-            await event.send(result_msg)
+            result_msg = (
+                f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n"
+                f"{llm_resp.completion_text}\n\n"
+                f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+            )
+            # 修复：构造消息链
+            result_chain = MessageChain([Plain(result_msg)])
+            await event.send(result_chain)
             
         except Exception as e:
             logger.error(f"AI审核出错：{e}", exc_info=True)
-            await event.send(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")
+            # 修复：构造消息链发送错误提示
+            error_chain = MessageChain([Plain(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")])
+            await event.send(error_chain)
 
     async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
         """管理员确认审核结果"""
