@@ -625,6 +625,47 @@ class BlindBoxPlugin(Star):
             task_snapshot_json,
         ]
 
+    @staticmethod
+    def _group_export_csv_row(
+        group_no: str,
+        group_data: dict[str, object],
+        draw_data: dict[str, object] | None,
+        record: dict[str, object] | None = None,
+    ) -> list[str]:
+        members = _parse_qq_list(group_data.get("members", []))
+        draw_snapshot = draw_data if isinstance(draw_data, dict) else {}
+        task_snapshot_json = json.dumps(draw_snapshot, ensure_ascii=False) if draw_snapshot else "{}"
+        record_data = record if isinstance(record, dict) else {}
+        task_snapshot = record_data.get("task_snapshot", {})
+        task_snapshot_dict = task_snapshot if isinstance(task_snapshot, dict) else {}
+
+        return [
+            str(group_no),
+            str(group_data.get("group_name", "")),
+            str(group_data.get("leader_qq", "")),
+            "|".join(members),
+            str(draw_snapshot.get("week", "")),
+            str(draw_snapshot.get("category", "")),
+            str(draw_snapshot.get("title", "")),
+            str(draw_snapshot.get("points", 0)),
+            str(draw_snapshot.get("draw_count", 0)),
+            str(draw_snapshot.get("drawn_at", "")),
+            str(record_data.get("submission_id", "")),
+            str(record_data.get("submitter_qq", "")),
+            str(record_data.get("source", "")),
+            str(record_data.get("week", draw_snapshot.get("week", ""))),
+            str(record_data.get("review_status", "")),
+            str(record_data.get("review_reason", "")),
+            str(record_data.get("reviewer", "")),
+            str(record_data.get("reviewed_at", "")),
+            str(record_data.get("awarded_points", "")),
+            str(record_data.get("score_applied", "")),
+            str(record_data.get("submitted_at", "")),
+            "|".join(_parse_qq_list(record_data.get("image_urls", []))),
+            str(record_data.get("materials_text", "")),
+            json.dumps(task_snapshot_dict, ensure_ascii=False) if task_snapshot_dict else task_snapshot_json,
+        ]
+
     def _load_submission_records(self, group_no: str) -> list[dict[str, object]]:
         path = self._submission_file_path(group_no)
         legacy_path = self._legacy_submission_file_path(group_no)
@@ -1233,6 +1274,13 @@ class BlindBoxPlugin(Star):
                 "group_no",
                 "group_name",
                 "leader_qq",
+                "member_qqs",
+                "task_week",
+                "task_category",
+                "task_title",
+                "task_points",
+                "draw_count",
+                "drawn_at",
                 "submission_id",
                 "submitter_qq",
                 "source",
@@ -1244,9 +1292,6 @@ class BlindBoxPlugin(Star):
                 "awarded_points",
                 "score_applied",
                 "submitted_at",
-                "task_category",
-                "task_title",
-                "task_points",
                 "image_urls",
                 "materials_text",
                 "task_snapshot_json",
@@ -1259,34 +1304,16 @@ class BlindBoxPlugin(Star):
                     continue
                 group_no_str = str(group_no)
                 submissions = self._load_submission_records(group_no_str)
-                _ = draws.get(group_no_str) if isinstance(draws, dict) else None
+                draw_data = draws.get(group_no_str) if isinstance(draws, dict) else None
+                if not submissions:
+                    writer.writerow(self._group_export_csv_row(group_no_str, group_data, draw_data, None))
+                    total_records += 1
+                    continue
+
                 for record in submissions:
                     if not isinstance(record, dict):
                         continue
-                    task_snapshot = record.get("task_snapshot", {})
-                    task_snapshot_dict = task_snapshot if isinstance(task_snapshot, dict) else {}
-                    writer.writerow([
-                        group_no_str,
-                        str(group_data.get("group_name", "")),
-                        str(group_data.get("leader_qq", "")),
-                        str(record.get("submission_id", "")),
-                        str(record.get("submitter_qq", "")),
-                        str(record.get("source", "")),
-                        str(record.get("week", "")),
-                        str(record.get("review_status", "pending")),
-                        str(record.get("review_reason", "")),
-                        str(record.get("reviewer", "")),
-                        str(record.get("reviewed_at", "")),
-                        str(int(record.get("awarded_points", 0))),
-                        str(bool(record.get("score_applied", False))),
-                        str(record.get("submitted_at", "")),
-                        str(task_snapshot_dict.get("category", "")),
-                        str(task_snapshot_dict.get("title", "")),
-                        str(task_snapshot_dict.get("points", 0)),
-                        "|".join(_parse_qq_list(record.get("image_urls", []))),
-                        str(record.get("materials_text", "")),
-                        json.dumps(task_snapshot_dict, ensure_ascii=False) if task_snapshot_dict else "{}",
-                    ])
+                    writer.writerow(self._group_export_csv_row(group_no_str, group_data, draw_data, record))
                     total_records += 1
 
             filename = f"blindbox_all_groups_submissions_{_week_key()}.csv"

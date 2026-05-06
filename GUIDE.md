@@ -220,16 +220,16 @@ http://172.26.41.148:6099/astrbot_plugin_blindbox/group/export-submissions-all-c
 
 ### 提交记录（全部导出/导入）模板
 
-导出全部提交会生成包含以下列的 CSV（示例表头）：
+导出全部提交会生成包含以下列的 CSV。它会按“小组”为主输出数据，即使某个小组还没有提交记录，也会先导出该小组与任务信息，只是提交相关列为空。
 
 ```
-group_no,group_name,leader_qq,submission_id,submitter_qq,source,week,review_status,review_reason,reviewer,reviewed_at,awarded_points,score_applied,submitted_at,task_category,task_title,task_points,image_urls,materials_text,task_snapshot_json
+group_no,group_name,leader_qq,member_qqs,task_week,task_category,task_title,task_points,draw_count,drawn_at,submission_id,submitter_qq,source,week,review_status,review_reason,reviewer,reviewed_at,awarded_points,score_applied,submitted_at,image_urls,materials_text,task_snapshot_json
 ```
 
 示例行：
 
 ```
-1,小组一,100,abcd1234,100,manual,2026-W18,pending,,,,0,False,2026-05-06,"学习类","自习地点抽签",10,"http://...","小组提交材料","{}"
+1,小组一,100,100|101|102,2026-W18,学习类,自习地点抽签,10,1,2026-05-06T12:00:00,abcd1234,100,manual,2026-W18,pending,,,,0,False,2026-05-06T12:30:00,http://...,小组提交材料,"{...}"
 ```
 
 导入说明：
