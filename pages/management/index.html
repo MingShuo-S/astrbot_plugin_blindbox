@@ -17,6 +17,13 @@
         <div class="hero-card">
           <div class="hero-card-title">当前状态</div>
           <div id="stats" class="stats"></div>
+          <div class="hero-card-actions">
+            <button id="exportAllBtn" class="secondary">全部导出</button>
+            <label class="file-upload">
+              <input id="importFileInput" type="file" accept=".csv,.xlsx" />
+              <span class="ghost">全部导入</span>
+            </label>
+          </div>
         </div>
       </header>
 
@@ -59,6 +66,17 @@
         <span>任务内容仍可在插件配置页里编辑，当前页面主要负责小组与成员管理。</span>
         <span id="message" class="message"></span>
       </footer>
+    </div>
+
+    <!-- 自定义确认模态框（替代 window.confirm，因为 iframe 可能被 sandbox 禁用 allow-modals） -->
+    <div id="confirmModal" class="confirm-modal" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);z-index:9999;">
+      <div style="background:#fff;border-radius:8px;padding:16px;max-width:420px;width:90%;box-shadow:0 6px 24px rgba(0,0,0,0.2);">
+        <div id="confirmModalText" style="margin-bottom:12px;color:#111;"></div>
+        <div style="text-align:right;">
+          <button id="confirmCancelBtn" class="ghost" style="margin-right:8px;">取消</button>
+          <button id="confirmOkBtn" class="danger">确认</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./app.js"></script>

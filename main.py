@@ -396,6 +396,7 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/redraw", self.api_group_redraw, ["POST"], "重抽小组任务")
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
+        context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
@@ -1618,6 +1619,69 @@ class BlindBoxPlugin(Star):
                 result["message"] += f"有 {len(errors)} 行出错。"
             return result
         
+        return await self._api_result(_handler)
+
+    async def api_group_import_submissions_all_csv(self):
+        """接收一个包含所有小组提交记录的 CSV 文本，按照 group_no 写入各自的提交文件，覆盖同名文件。"""
+        payload = await self._get_request_json()
+        csv_content = str(payload.get("csv", "")).strip()
+
+        async def _handler():
+            if not csv_content:
+                raise ValueError("CSV 内容不能为空。")
+
+            csv_buffer = StringIO(csv_content)
+            reader = csv.DictReader(csv_buffer)
+            rows = list(reader)
+            if not rows:
+                raise ValueError("CSV 文件为空或格式错误。")
+
+            # 期望 CSV 至少包含 group_no 字段和 submission_id 字段
+            required_fields = {"group_no", "submission_id"}
+            headers = set(reader.fieldnames or [])
+            if not required_fields.issubset(headers):
+                raise ValueError(f"CSV 必须包含字段: {', '.join(required_fields)}")
+
+            grouped: dict[str, list[dict[str, object]]] = {}
+            for row in rows:
+                gno = str(row.get("group_no", "")).strip()
+                if not gno:
+                    continue
+                # 将行映射为提交记录的字段名（尽量保留原字段）
+                record = {k: v for k, v in row.items()}
+                grouped.setdefault(gno, []).append(record)
+
+            # 写入每个小组的提交文件（覆盖）
+            for gno, recs in grouped.items():
+                try:
+                    # 将字符串行数据尽量转换为插件内部期待的字段名格式
+                    normalized: list[dict[str, object]] = []
+                    for r in recs:
+                        normalized.append({
+                            "submission_id": str(r.get("submission_id", "") or ""),
+                            "group_no": str(gno),
+                            "group_name": str(r.get("group_name", "") or ""),
+                            "submitter_qq": str(r.get("submitter_qq", "") or ""),
+                            "materials_text": str(r.get("materials_text", "") or ""),
+                            "image_urls": _parse_qq_list(r.get("image_urls", "") or ""),
+                            "images": [],
+                            "source": str(r.get("source", "manual") or "manual"),
+                            "week": str(r.get("week", _week_key())),
+                            "task_snapshot": {},
+                            "review_status": str(r.get("review_status", "pending") or "pending"),
+                            "review_reason": str(r.get("review_reason", "") or ""),
+                            "reviewer": str(r.get("reviewer", "") or ""),
+                            "reviewed_at": str(r.get("reviewed_at", "") or ""),
+                            "awarded_points": int(r.get("awarded_points", 0) or 0),
+                            "score_applied": bool(r.get("score_applied", False) and str(r.get("score_applied", "")).lower() in {"1","true","yes","on"}),
+                            "submitted_at": str(r.get("submitted_at", _timestamp()) or _timestamp()),
+                        })
+                    _safe_json_dump(self._submission_file_path(str(gno)), normalized)
+                except Exception:
+                    logger.exception("写入提交记录失败: %s", gno)
+
+            return {"imported_groups": len(grouped)}
+
         return await self._api_result(_handler)
 
     # ----------------------------

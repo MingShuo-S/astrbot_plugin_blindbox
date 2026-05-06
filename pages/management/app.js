@@ -5,6 +5,8 @@ const messageEl = document.getElementById("message");
 const statusBadge = document.getElementById("statusBadge");
 const refreshBtn = document.getElementById("refreshBtn");
 const createForm = document.getElementById("createForm");
+const exportAllBtn = document.getElementById("exportAllBtn");
+const importFileInput = document.getElementById("importFileInput");
 
 let pageContext = null;
 let state = null;
@@ -197,6 +199,8 @@ function renderGroups(data) {
           await callApi("group/remove", { group_no: groupNo, qq_list: qqList });
           removeInput.value = "";
         } else if (action === "redraw") {
+          console.debug("redraw clicked", groupNo);
+          showMessage(`正在为小组 ${groupNo} 重抽...`, "ok");
           await callApi("group/redraw", { group_no: groupNo, force_redraw: true });
         } else if (action === "request-dissolve") {
           await callApi("group/request-dissolve", { group_no: groupNo });
@@ -209,10 +213,12 @@ function renderGroups(data) {
           const result = await callApi("group/export-submissions", { group_no: groupNo });
           downloadJson(`blindbox-group-${groupNo}-submissions.json`, result);
         } else if (action === "dissolve") {
-          const confirmed = confirm(`确认解散小组 ${groupNo} 吗？`);
+          console.debug("dissolve clicked", groupNo);
+          const confirmed = await showConfirm(`确认解散小组 ${groupNo} 吗？`);
           if (!confirmed) {
             return;
           }
+          showMessage(`正在解散小组 ${groupNo}...`, "warn");
           await callApi("group/dissolve", { group_no: groupNo });
         }
         await loadState();
@@ -223,11 +229,115 @@ function renderGroups(data) {
   });
 }
 
+// 全部导出
+if (exportAllBtn) {
+  exportAllBtn.addEventListener("click", async () => {
+    try {
+      setStatus("导出中", "warn");
+      // Dashboard bridge provides download via apiGet
+      const resp = await bridge.apiGet("group/export-submissions-all-csv");
+      // 如果返回的是对象（bridge 可能封装为 { success, data }），尝试用文件下载方法
+      if (resp && typeof resp === "object" && resp.csv) {
+        const blob = new Blob(["\ufeff" + resp.csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = resp.filename || `blindbox_all_groups_${Date.now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (typeof resp === "string") {
+        const blob = new Blob(["\ufeff" + resp], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `blindbox_all_groups_${Date.now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        showMessage("导出失败：返回格式未知。", "err");
+      }
+    } catch (err) {
+      showMessage(err.message || String(err), "err");
+    } finally {
+      setStatus("在线", "ok");
+    }
+  });
+}
+
+// 全部导入（CSV 文本），前端读取文件并以文本形式 POST 到后端处理
+if (importFileInput) {
+  importFileInput.addEventListener("change", async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    if (!confirm(`确认导入文件：${file.name} ? 这将覆盖对应小组的提交记录。`)) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const text = String(reader.result || "");
+        setStatus("导入中", "warn");
+        await callApi("group/import-submissions-all-csv", { csv: text });
+        await loadState();
+        showMessage("导入完成", "ok");
+      } catch (err) {
+        showMessage(err.message || String(err), "err");
+      } finally {
+        setStatus("在线", "ok");
+      }
+    };
+    if (file.name.endsWith(".xlsx")) {
+      showMessage("不支持直接解析 .xlsx，请另存为 CSV 并重试。", "err");
+      return;
+    }
+    reader.readAsText(file, "utf-8");
+  });
+}
+
 function normalizeApiResponse(payload) {
   if (payload && typeof payload === "object" && "success" in payload) {
     return payload;
   }
   return { success: true, message: "操作成功", data: payload };
+}
+
+// 自定义确认对话框，返回 Promise<boolean>
+function showConfirm(message) {
+  return new Promise((resolve) => {
+    let modal = document.getElementById("confirmModal");
+    let textEl = document.getElementById("confirmModalText");
+    const okBtn = document.getElementById("confirmOkBtn");
+    const cancelBtn = document.getElementById("confirmCancelBtn");
+    if (!modal || !textEl || !okBtn || !cancelBtn) {
+      // 回退为同步 confirm（仅在允许时）
+      try {
+        resolve(window.confirm(message));
+      } catch (e) {
+        resolve(false);
+      }
+      return;
+    }
+
+    textEl.textContent = message;
+    modal.style.display = "flex";
+
+    function cleanup() {
+      modal.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+    }
+
+    function onOk() {
+      cleanup();
+      resolve(true);
+    }
+
+    function onCancel() {
+      cleanup();
+      resolve(false);
+    }
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+  });
 }
 
 async function callApi(endpoint, body) {

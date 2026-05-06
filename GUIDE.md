@@ -218,6 +218,26 @@ http://172.26.41.148:6099/astrbot_plugin_blindbox/group/export-submissions-all-c
 
 ---
 
+### 提交记录（全部导出/导入）模板
+
+导出全部提交会生成包含以下列的 CSV（示例表头）：
+
+```
+group_no,group_name,leader_qq,submission_id,submitter_qq,source,week,review_status,review_reason,reviewer,reviewed_at,awarded_points,score_applied,submitted_at,task_category,task_title,task_points,image_urls,materials_text,task_snapshot_json
+```
+
+示例行：
+
+```
+1,小组一,100,abcd1234,100,manual,2026-W18,pending,,,,0,False,2026-05-06,"学习类","自习地点抽签",10,"http://...","小组提交材料","{}"
+```
+
+导入说明：
+- 导入前请确保 CSV 的表头与上方模板一致（`group_no` 和 `submission_id` 为必需列）。
+- 导入会按 `group_no` 将行分组，并覆盖对应小组的提交文件（`data/plugins/astrbot_plugin_blindbox/submissions/group_<no>.json`）。
+- 当前导入仅支持 CSV；如需导入 `.xlsx`，请先另存为 CSV 后再导入。
+
+
 ## 🤖 AI 审核机制
 
 ### 工作流程
