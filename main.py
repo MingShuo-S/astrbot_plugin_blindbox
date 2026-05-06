@@ -10,11 +10,16 @@ from pathlib import Path
 from random import choice
 from uuid import uuid4
 
+from pydantic import Field
+from pydantic.dataclasses import dataclass
 from quart import Response, jsonify, request
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+from astrbot.core.agent.run_context import ContextWrapper
+from astrbot.core.agent.tool import FunctionTool, ToolExecResult, ToolSet
+from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.message.components import At, BaseMessageComponent, Image, Plain
 
 
@@ -332,6 +337,188 @@ def _format_help() -> str:
 
 
 # ----------------------------
+# AI Tool 定义
+# ----------------------------
+
+class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
+    """获取待审核提交的AI工具"""
+    
+    def __init__(self, plugin_instance):
+        self.plugin = plugin_instance
+        super().__init__()
+    
+    name: str = "blindbox_get_submissions"
+    description: str = "获取指定小组的待审核提交记录，用于判断是否需要审核以及审核内容"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "group_no": {
+                    "type": "string",
+                    "description": "小组序号，例如 '1' 或 '12321'",
+                },
+            },
+            "required": ["group_no"],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        group_no = str(kwargs.get("group_no", "")).strip()
+        if not group_no:
+            return ToolExecResult(error="group_no 不能为空")
+        
+        try:
+            group_data = await self.plugin._ensure_group_or_raise(group_no)
+            records = self.plugin._load_submission_records(group_no)
+            pending = [r for r in records if r.get("review_status") == "pending"]
+            return ToolExecResult(
+                data={
+                    "group_no": group_no,
+                    "group_name": group_data.get("group_name", ""),
+                    "pending_count": len(pending),
+                    "submissions": pending,
+                }
+            )
+        except Exception as e:
+            return ToolExecResult(error=str(e))
+
+
+class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
+    """获取审核指南的AI工具"""
+    
+    def __init__(self, plugin_instance):
+        self.plugin = plugin_instance
+        super().__init__()
+    
+    name: str = "blindbox_get_prompt"
+    description: str = "获取审核指南和标准，包含所有审核信息和要求"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        return ToolExecResult(data={"prompt": self.plugin._build_ai_prompt_context()})
+
+
+class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
+    """提交审核结果的AI工具"""
+    
+    def __init__(self, plugin_instance):
+        self.plugin = plugin_instance
+        super().__init__()
+    
+    name: str = "blindbox_review_submission"
+    description: str = "提交对一条提交的审核结果（通过或拒绝），自动更新状态并加分"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "group_no": {
+                    "type": "string",
+                    "description": "小组序号",
+                },
+                "submission_id": {
+                    "type": "string",
+                    "description": "提交编号，在 blindbox_get_submissions 的返回结果中可以找到",
+                },
+                "verdict": {
+                    "type": "string",
+                    "description": "审核结果，可以是 'approved' 或 'rejected'",
+                },
+                "review_reason": {
+                    "type": "string",
+                    "description": "审核意见或拒绝理由（可选）",
+                },
+                "score_delta": {
+                    "type": "number",
+                    "description": "如果通过，给多少积分（可选，默认为任务建议积分）",
+                },
+            },
+            "required": ["group_no", "submission_id", "verdict"],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        group_no = str(kwargs.get("group_no", "")).strip()
+        submission_id = str(kwargs.get("submission_id", "")).strip()
+        verdict = str(kwargs.get("verdict", "")).strip().lower()
+        review_reason = str(kwargs.get("review_reason", "")).strip()
+        score_delta_raw = kwargs.get("score_delta", None)
+
+        try:
+            if not group_no:
+                raise ValueError("group_no 不能为空")
+            if not submission_id:
+                raise ValueError("submission_id 不能为空")
+            
+            group_data = await self.plugin._ensure_group_or_raise(group_no)
+            current_draws = await self.plugin._get_state()
+            draw_data = current_draws.get("draws", {}).get(group_no) if isinstance(current_draws.get("draws", {}), dict) else None
+            records = self.plugin._load_submission_records(group_no)
+
+            target_record = None
+            for record in records:
+                if isinstance(record, dict) and record.get("submission_id") == submission_id:
+                    target_record = record
+                    break
+            if target_record is None:
+                raise ValueError(f"找不到提交记录 {submission_id}")
+
+            previous_award = int(target_record.get("awarded_points", 0))
+            previously_applied = bool(target_record.get("score_applied", False))
+            if previously_applied and previous_award:
+                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+
+            if score_delta_raw is None or str(score_delta_raw).strip() == "":
+                score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            else:
+                try:
+                    score_delta = int(score_delta_raw)
+                except (TypeError, ValueError):
+                    raise ValueError("score_delta 必须是整数")
+
+            approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
+            applied_points = score_delta if approved else 0
+            target_record.update(
+                {
+                    "review_status": verdict or "pending",
+                    "review_reason": review_reason,
+                    "reviewer": "ai",
+                    "reviewed_at": _timestamp(),
+                    "score_applied": bool(applied_points),
+                    "awarded_points": applied_points,
+                }
+            )
+
+            if approved:
+                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+
+            self.plugin._save_submission_records(group_no, records)
+            await self.plugin._save_state()
+            
+            return ToolExecResult(
+                data={
+                    "success": True,
+                    "group": group_data,
+                    "submission": target_record,
+                    "approved": approved,
+                }
+            )
+        except Exception as e:
+            return ToolExecResult(error=str(e))
+
+
+# ----------------------------
 # AstrBot 插件主体
 # ----------------------------
 @register(PLUGIN_NAME, "YourName", "南京大学行知×开甲学习小组抽奖盲盒", "0.5.0")
@@ -342,6 +529,17 @@ class BlindBoxPlugin(Star):
         self._state_lock = asyncio.Lock()
         self._state_loaded = False
         self._state: dict[str, object] = _default_state()
+        
+        # 记录当前等待管理员确认的审核（submission_id -> (group_no, submission_data)）
+        self._pending_reviews: dict[str, tuple[str, dict]] = {}
+        
+        # 注册AI工具
+        self.context.add_llm_tools(
+            BlindboxGetSubmissionsTool(self),
+            BlindboxGetPromptTool(self),
+            BlindboxReviewSubmissionTool(self),
+        )
+        
         self._register_web_apis(context)
 
     def _register_web_apis(self, context: Context) -> None:
@@ -397,6 +595,8 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
+        context.register_web_api(f"/{PLUGIN_NAME}/api/pending-reviews", self.api_pending_reviews, ["GET"], "获取待确认审核列表")
+        context.register_web_api(f"/{PLUGIN_NAME}/api/confirm-review", self.api_confirm_review_endpoint, ["POST"], "管理员确认审核结果")
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
@@ -834,10 +1034,12 @@ class BlindBoxPlugin(Star):
             "/blindbox group list - 查看所有小组\n"
             "/blindbox group info <序号> - 查看小组详情\n"
             "/blindbox submit <说明> - 提交任务材料\n\n"
+            "【重要】\n"
+            "- 不要调用 shell/命令行工具\n"
+            "- 不要输出 function_call、tool_call 或带 name/arguments 的结构体\n"
+            "- 如果需要说明审核结果，只返回自然语言或规范化 JSON\n\n"
             "祝审核顺利！"
         )
-        # 明确告知模型不要以函数调用或工具调用的形式输出内容，避免被运行时当作工具调用解析。
-        # 例如：不要生成 function_call、不要返回带有 name/arguments 的结构体，只返回文本或规范化 JSON。
 
     def _group_has_member(self, group_data: dict[str, object], qq: str) -> bool:
         members = group_data.get("members", [])
@@ -1942,6 +2144,107 @@ class BlindBoxPlugin(Star):
 
         yield event.plain_result(_format_help())
 
+    async def api_pending_reviews(self):
+        """获取待确认的审核列表"""
+        try:
+            pending_list = []
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            
+            for submission_id, (group_no, submission) in self._pending_reviews.items():
+                group_data = groups.get(group_no)
+                if not group_data:
+                    continue
+                
+                pending_list.append({
+                    "submission_id": submission_id,
+                    "group_no": group_no,
+                    "group_name": group_data.get("group_name", ""),
+                    "submitter_qq": submission.get("submitter_qq", ""),
+                    "materials_text": submission.get("materials_text", ""),
+                    "image_urls": submission.get("image_urls", []),
+                    "task_snapshot": submission.get("task_snapshot", {}),
+                    "submitted_at": submission.get("submitted_at", ""),
+                    "review_status": submission.get("review_status", ""),
+                })
+            
+            return jsonify({"success": True, "data": pending_list})
+        except Exception as e:
+            logger.error(f"获取待确认审核列表出错：{e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    async def api_confirm_review_endpoint(self):
+        """管理员通过 WebUI 确认审核结果"""
+        try:
+            data = await request.get_json()
+            submission_id = str(data.get("submission_id", "")).strip()
+            verdict = str(data.get("verdict", "")).strip()  # "approved" 或 "rejected"
+            
+            if not submission_id or verdict not in {"approved", "rejected"}:
+                return jsonify({"success": False, "error": "参数错误"})
+            
+            if submission_id not in self._pending_reviews:
+                return jsonify({"success": False, "error": f"找不到提交编号 {submission_id}"})
+            
+            group_no, submission = self._pending_reviews[submission_id]
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no)
+            
+            if not group_data:
+                return jsonify({"success": False, "error": f"小组 {group_no} 不存在"})
+            
+            draws = state.get("draws", {})
+            draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+            records = self._load_submission_records(group_no)
+            
+            target_record = None
+            for record in records:
+                if isinstance(record, dict) and record.get("submission_id") == submission_id:
+                    target_record = record
+                    break
+            
+            if not target_record:
+                return jsonify({"success": False, "error": f"找不到提交记录 {submission_id}"})
+            
+            # 更新审核状态
+            previous_award = int(target_record.get("awarded_points", 0))
+            previously_applied = bool(target_record.get("score_applied", False))
+            if previously_applied and previous_award:
+                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+            
+            approved = verdict == "approved"
+            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            applied_points = score_delta if approved else 0
+            
+            target_record.update({
+                "review_status": verdict,
+                "review_reason": "管理员确认",
+                "reviewer": "admin",
+                "reviewed_at": _timestamp(),
+                "score_applied": bool(applied_points),
+                "awarded_points": applied_points,
+            })
+            
+            if approved:
+                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+            
+            self._save_submission_records(group_no, records)
+            await self._save_state()
+            
+            # 清除pending记录
+            del self._pending_reviews[submission_id]
+            
+            return jsonify({
+                "success": True,
+                "message": f"已确认 {submission_id}",
+                "verdict": verdict,
+                "awarded_points": applied_points,
+            })
+        except Exception as e:
+            logger.error(f"管理员确认审核出错：{e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
     async def _handle_draw(self, event: AstrMessageEvent, args: list[str], force_redraw: bool = False):
         sender_id = self._get_sender_id(event)
         group_no, group_data = await self._find_group_by_member(sender_id)
@@ -1972,6 +2275,122 @@ class BlindBoxPlugin(Star):
         elif not created_new:
             lines.append("本周已存在任务，返回当前任务；如需更换请使用 /blindbox redraw。")
         yield event.plain_result("\n".join(lines))
+
+    async def _trigger_ai_review(self, event: AstrMessageEvent, group_no: str, submission_id: str):
+        """触发AI审核流程"""
+        try:
+            umo = event.unified_msg_origin
+            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+            
+            # 构造AI审核提示词
+            prompt = (
+                f"有一条新的盲盒任务提交需要审核。\n\n"
+                f"小组序号：{group_no}\n"
+                f"提交编号：{submission_id}\n\n"
+                f"请使用 blindbox_get_submissions 工具查看待审核提交的详细内容，"
+                f"然后根据审核指南进行审核，最后调用 blindbox_review_submission 工具提交审核结果。"
+            )
+            
+            llm_resp = await self.context.tool_loop_agent(
+                event=event,
+                chat_provider_id=prov_id,
+                prompt=prompt,
+                system_prompt=self._build_ai_prompt_context(),
+                tools=ToolSet([
+                    BlindboxGetSubmissionsTool(self),
+                    BlindboxGetPromptTool(self),
+                    BlindboxReviewSubmissionTool(self),
+                ]),
+                max_steps=10,
+            )
+            
+            # 向群里报告AI审核结果
+            result_msg = f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n{llm_resp.completion_text}\n\n" \
+                        f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+            await event.send(result_msg)
+            
+        except Exception as e:
+            logger.error(f"AI审核出错：{e}", exc_info=True)
+            await event.send(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")
+
+    async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
+        """管理员确认审核结果"""
+        try:
+            if submission_id not in self._pending_reviews:
+                yield event.plain_result(f"找不到提交编号 {submission_id} 的待确认审核。")
+                return
+            
+            group_no, submission = self._pending_reviews[submission_id]
+            
+            # 调用审核工具或API来确认
+            # 这里直接调用BlindboxReviewSubmissionTool逻辑，或者构造payload调用api_ai_review
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            member_to_group = state.get("member_to_group", {})
+            group_data = groups.get(group_no)
+            
+            if not group_data:
+                yield event.plain_result(f"小组 {group_no} 不存在。")
+                return
+            
+            draws = state.get("draws", {})
+            draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+            records = self._load_submission_records(group_no)
+
+            target_record = None
+            for record in records:
+                if isinstance(record, dict) and record.get("submission_id") == submission_id:
+                    target_record = record
+                    break
+            
+            if target_record is None:
+                yield event.plain_result(f"找不到提交记录 {submission_id}。")
+                return
+
+            # 更新审核状态
+            previous_award = int(target_record.get("awarded_points", 0))
+            previously_applied = bool(target_record.get("score_applied", False))
+            if previously_applied and previous_award:
+                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+
+            approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
+            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            applied_points = score_delta if approved else 0
+            
+            target_record.update(
+                {
+                    "review_status": verdict or "pending",
+                    "review_reason": f"管理员确认",
+                    "reviewer": str(self._get_sender_id(event)),  # 记录确认者
+                    "reviewed_at": _timestamp(),
+                    "score_applied": bool(applied_points),
+                    "awarded_points": applied_points,
+                }
+            )
+
+            if approved:
+                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+
+            self._save_submission_records(group_no, records)
+            await self._save_state()
+            
+            # 清除pending记录
+            del self._pending_reviews[submission_id]
+            
+            verdict_text = "通过✅" if approved else "拒绝❌"
+            yield event.plain_result(
+                f"审核确认完成！\n"
+                f"提交编号：{submission_id}\n"
+                f"小组：{group_data.get('group_name', '')}\n"
+                f"结果：{verdict_text}\n"
+                f"本轮积分：{applied_points}"
+            )
+            
+        except Exception as e:
+            logger.error(f"管理员确认审核出错：{e}", exc_info=True)
+            yield event.plain_result(f"确认审核出错：{e}")
+
+
 
     async def _handle_whoami(self, event: AstrMessageEvent):
         sender_id = self._get_sender_id(event)
@@ -2007,16 +2426,23 @@ class BlindBoxPlugin(Star):
             source="command",
         )
 
+        submission_id = submission.get("submission_id", "")
         yield event.plain_result(
             "\n".join(
                 [
                     "已提交任务材料，等待 AI 审核。",
-                    f"提交编号：{submission['submission_id']}",
+                    f"提交编号：{submission_id}",
                     f"当前小组：{group_no} / {group_data.get('group_name', '')}",
                     f"本次关联任务：{submission['task_snapshot'].get('title', '暂无任务') if isinstance(submission['task_snapshot'], dict) else '暂无任务'}",
                 ]
             )
         )
+        
+        # 记录此次提交以供后续管理员确认
+        self._pending_reviews[submission_id] = (group_no, submission)
+        
+        # 异步启动AI审核流程
+        asyncio.create_task(self._trigger_ai_review(event, group_no, submission_id))
 
     async def _handle_at_submission(self, event: AstrMessageEvent):
         # @ 机器人提交功能已被移除：不再处理通过 @ 发来的消息作为提交。
@@ -2061,6 +2487,24 @@ class BlindBoxPlugin(Star):
 
         if head in {"submit", "submit-task", "提交", "交付"}:
             async for result in self._handle_submit(event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"pass", "approve", "通过"}:
+            if len(tokens) < 2:
+                yield event.plain_result("用法：/blindbox pass <提交编号>")
+                return
+            submission_id = str(tokens[1]).strip()
+            async for result in self._confirm_review(event, submission_id, "approved"):
+                yield result
+            return
+
+        if head in {"deny", "reject", "拒绝", "驳回"}:
+            if len(tokens) < 2:
+                yield event.plain_result("用法：/blindbox deny <提交编号>")
+                return
+            submission_id = str(tokens[1]).strip()
+            async for result in self._confirm_review(event, submission_id, "rejected"):
                 yield result
             return
 

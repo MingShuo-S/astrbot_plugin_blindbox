@@ -1,0 +1,406 @@
+/* 基础样式继承 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  background: #f5f5f5;
+  color: #333;
+  line-height: 1.6;
+}
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Header */
+.hero {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  margin-bottom: 30px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 30px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.hero h1 {
+  font-size: 28px;
+  margin: 10px 0;
+}
+
+.hero p {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.8;
+}
+
+.lead {
+  margin-top: 10px;
+  font-size: 16px;
+}
+
+.hero-card {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 20px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.hero-card-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  opacity: 0.8;
+  margin-bottom: 10px;
+}
+
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.stat-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.hero-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* Buttons */
+.secondary {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.secondary:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.btn-approve {
+  background: #4caf50;
+  color: white;
+}
+
+.btn-approve:hover {
+  background: #45a049;
+}
+
+.btn-reject {
+  background: #f44336;
+  color: white;
+}
+
+.btn-reject:hover {
+  background: #da190b;
+}
+
+/* Grid & Panel */
+.grid {
+  display: grid;
+  gap: 20px;
+}
+
+.panel {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.panel--wide {
+  grid-column: 1 / -1;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.panel-head h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+/* Message */
+.message {
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  display: none;
+  font-size: 14px;
+}
+
+.message.ok {
+  display: block;
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-left: 4px solid #4caf50;
+}
+
+.message.error {
+  display: block;
+  background: #ffebee;
+  color: #c62828;
+  border-left: 4px solid #f44336;
+}
+
+/* Reviews Container */
+.reviews-container {
+  display: grid;
+  gap: 20px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+  font-size: 16px;
+}
+
+/* Review Card */
+.review-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.review-header {
+  background: #f5f5f5;
+  padding: 16px;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.review-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.review-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  text-align: center;
+  min-width: 40px;
+}
+
+.group-no {
+  background: #667eea;
+  color: white;
+}
+
+.review-info h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.submission-id {
+  font-size: 12px;
+  color: #666;
+  margin-left: auto;
+}
+
+.task-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 20px;
+}
+
+.task-category {
+  display: inline-block;
+  background: #e3f2fd;
+  color: #1976d2;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.task-title {
+  font-size: 14px;
+  color: #333;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-points {
+  display: inline-block;
+  background: #fff3e0;
+  color: #e65100;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+/* Submission Details */
+.submission-details {
+  padding: 16px;
+}
+
+.submitted-by {
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.submitted-at {
+  color: #999;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.materials-section {
+  margin-bottom: 16px;
+}
+
+.materials-section strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #333;
+}
+
+.materials-content {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 13px;
+  max-height: 300px;
+  overflow-y: auto;
+  line-height: 1.5;
+  color: #333;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.images-section {
+  margin-bottom: 16px;
+}
+
+.images-section strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #333;
+}
+
+.images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.submission-image {
+  width: 100%;
+  height: auto;
+  max-height: 150px;
+  object-fit: cover;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.3s;
+}
+
+.submission-image:hover {
+  transform: scale(1.05);
+}
+
+/* Actions */
+.review-actions {
+  display: flex;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid #e0e0e0;
+  background: #f9f9f9;
+  justify-content: flex-end;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .review-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .task-info {
+    margin-left: 0;
+    margin-top: 12px;
+    width: 100%;
+  }
+
+  .task-title {
+    max-width: none;
+  }
+
+  .images-grid {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+
+  .review-actions {
+    flex-wrap: wrap;
+  }
+}
