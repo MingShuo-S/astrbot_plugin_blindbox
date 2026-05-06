@@ -28,7 +28,7 @@ from astrbot.core.message.components import (
 )
 
 
-from astrbot.api.message_components import MessageChain, Plain
+from astrbot.core.message.components import Plain
 
 
 PLUGIN_NAME = "astrbot_plugin_blindbox"
@@ -2309,15 +2309,13 @@ class BlindBoxPlugin(Star):
                 f"{llm_resp.completion_text}\n\n"
                 f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
             )
-            # 修复：构造消息链
-            result_chain = MessageChain([Plain(result_msg)])
-            await event.send(result_chain)
+            # 使用 chain_result 返回消息段列表（兼容 AstrBot V4）
+            yield event.chain_result([Plain(result_msg)])
             
         except Exception as e:
             logger.error(f"AI审核出错：{e}", exc_info=True)
-            # 修复：构造消息链发送错误提示
-            error_chain = MessageChain([Plain(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")])
-            await event.send(error_chain)
+            # 使用 chain_result 返回错误消息段列表（兼容 AstrBot V4）
+            yield event.chain_result([Plain(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")])
 
     async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
         """管理员确认审核结果"""
