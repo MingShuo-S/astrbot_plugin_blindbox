@@ -55,56 +55,65 @@ DEFAULT_RULES_TEXT = (
 )
 
 DEFAULT_TASKS = [
-    {"category": "学习类", "title": "自习地点抽签", "points": 10, "enabled": True},
-    {"category": "学习类", "title": "好书分享挑战", "points": 12, "enabled": True},
-    {"category": "学习类", "title": "错题交换挑战", "points": 12, "enabled": True},
-    {
-        "category": "学习类",
-        "title": "技能交换市场：每个人挑自己最近使用的学习工具或技能，做基本介绍",
-        "points": 15,
-        "enabled": True,
-    },
-    {"category": "体育类", "title": "跑 2.4 个 2k4", "points": 20, "enabled": True},
-    {"category": "体育类", "title": "占领健身房一天", "points": 18, "enabled": True},
-    {
-        "category": "体育类",
-        "title": "2k4 接力：不准 6 个人一人跑一圈带六个手机一起上传校园跑",
-        "points": 22,
-        "enabled": True,
-    },
-    {"category": "体育类", "title": "挑战校内校园跑最诡异路线", "points": 20, "enabled": True},
-    {"category": "交流类", "title": "一起看电影、剧本杀、桌游", "points": 12, "enabled": True},
-    {"category": "交流类", "title": "垃圾话漂流瓶：匿名收集盒，一周结束一起读", "points": 10, "enabled": True},
-    {"category": "交流类", "title": "传话游戏 / 传画游戏：接龙完成一个故事或连环画", "points": 14, "enabled": True},
-    {
-        "category": "交流类",
-        "title": "让 AI 胡乱生成一个 PPT，再找个空教室或南青格庐乱讲 PPT",
-        "points": 16,
-        "enabled": True,
-    },
-    {"category": "交流类", "title": "探索校园里的小动物：神奇动物在哪里", "points": 12, "enabled": True},
-    {"category": "吃喝类", "title": "一起吃疯狂星期四", "points": 8, "enabled": True},
+    {"category": "以智增慧", "title": "自习风险盲盒投资", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "文理互补错题交换", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "生活好物/代码神器安利", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "仙林鼓楼校校逛散步", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "技能交换五分钟", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "四六级/期末复习搭子盲盒", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "AI胡乱生成PPT盲盒路演", "points": 10, "enabled": True},
+    {"category": "以智增慧", "title": "图书馆夜读两小时", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "校园跑盲盒惊喜", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "操场接力跑FUN恩仇", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "景点散步路线图", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "操场集体跳绳/踢毽子怀旧局", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "跑步废物聊天配速小组", "points": 10, "enabled": True},
+    {"category": "以体强身", "title": "占领健身房一小时", "points": 10, "enabled": True},
+    {"category": "以德润心", "title": "夸夸接龙暖心卡", "points": 10, "enabled": True},
+    {"category": "以德润心", "title": "垃圾话漂流瓶", "points": 10, "enabled": True},
+    {"category": "以德润心", "title": "民国建筑导览员体验", "points": 10, "enabled": True},
+    {"category": "以德润心", "title": "志愿服务盲盒", "points": 10, "enabled": True},
+    {"category": "以德润心", "title": "倾听晚安电台", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "校园神奇动物通缉令", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "传画接龙脑洞赛", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "定格校园vlog闪现", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "一起看电影/小型摄影展", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "传话游戏/故事接龙", "points": 10, "enabled": True},
+    {"category": "以美立美", "title": "半日市集文艺扫街", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "20元穷鬼美食探店盲盒", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "宿舍/书桌收纳大作战", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "鼓楼附近吃放心午餐", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "咖啡自由大挑战", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "期末鼓励小零食漂流瓶", "points": 10, "enabled": True},
+    {"category": "以劳励行", "title": "深夜食堂盲盒操作", "points": 10, "enabled": True},
 ]
 
-TASK_CATEGORIES = ["学习类", "体育类", "交流类", "吃喝类"]
+TASK_CATEGORIES = ["以智增慧", "以体强身", "以德润心", "以美立美", "以劳励行"]
 CATEGORY_ALIASES = {
-    "学习": "学习类",
-    "学习类": "学习类",
-    "体育": "体育类",
-    "运动": "体育类",
-    "体育类": "体育类",
-    "交流": "交流类",
-    "交流类": "交流类",
-    "吃喝": "吃喝类",
-    "吃喝类": "吃喝类",
     "全部": "全部",
     "all": "全部",
     "random": "全部",
+    "随机": "全部",
+    "德": "以德润心",
+    "以德润心": "以德润心",
+    "以德润心类": "以德润心",
+    "智": "以智增慧",
+    "以智增慧": "以智增慧",
+    "以智增慧类": "以智增慧",
+    "体": "以体强身",
+    "以体强身": "以体强身",
+    "以体强身类": "以体强身",
+    "美": "以美立美",
+    "以美立美": "以美立美",
+    "以美立美类": "以美立美",
+    "劳": "以劳励行",
+    "以劳励行": "以劳励行",
+    "以劳励行类": "以劳励行",
 }
 
 
 def _default_state() -> dict[str, object]:
-    return {"groups": {}, "member_to_group": {}, "draws": {}}
+    return {"groups": {}, "member_to_group": {}, "draws": {}, "tasks": []}
 
 
 def _now() -> datetime:
@@ -265,9 +274,9 @@ def _pick_task(
 ) -> dict[str, object]:
     active_tasks = [task for task in tasks if task.get("enabled", True)]
     if category == "全部":
-        active_tasks = [task for task in active_tasks if task["category"] in TASK_CATEGORIES]
+        active_tasks = [task for task in active_tasks if str(task.get("category", "")).strip()]
     else:
-        active_tasks = [task for task in active_tasks if task["category"] == category]
+        active_tasks = [task for task in active_tasks if str(task.get("category", "")).strip() == category]
 
     # 排除上一次抽到的任务，确保每次抽的内容不同
     if exclude_task and isinstance(exclude_task, dict):
@@ -284,6 +293,17 @@ def _pick_task(
     return choice(active_tasks)
 
 
+def _task_categories(tasks: list[dict[str, object]]) -> list[str]:
+    categories: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        category = str(task.get("category", "")).strip()
+        if category and category not in categories:
+            categories.append(category)
+    return categories
+
+
 def _unique_strings(values: object) -> list[str]:
     if isinstance(values, str):
         tokens = [values]
@@ -298,6 +318,13 @@ def _unique_strings(values: object) -> list[str]:
         if item and item not in result:
             result.append(item)
     return result
+
+
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "on", "y", "是", "对"}
 
 
 def _parse_qq_list(value: object) -> list[str]:
@@ -317,14 +344,14 @@ def _format_task(task: dict[str, object], rules_text: str) -> str:
         f"建议积分：{task['points']} 分\n\n"
         "具体规则：\n"
         f"{base_text}\n\n"
-        "发送 /blindbox 学习、/blindbox 体育、/blindbox 交流、/blindbox 吃喝 或 /blindbox 全部 可再次抽取。"
+        "发送 /blindbox <分类名称> 或 /blindbox 全部 可再次抽取。"
     )
 
 
 def _format_help() -> str:
     return (
         "【BlindBox 小组管理】\n"
-        "盲盒抽取：/blindbox 或 /blindbox 学习 / 体育 / 交流 / 吃喝 / 全部\n"
+        "盲盒抽取：/blindbox 或 /blindbox <分类名称> / 全部\n"
         "小组创建：/blindbox group create <序号> <组名> <第一个QQ是组长> [QQ号...]\n"
         "添加成员：/blindbox group add <序号> <QQ号...>\n"
         "移除成员：/blindbox group remove <序号> <QQ号...>\n"
@@ -337,7 +364,7 @@ def _format_help() -> str:
         "查看小组：/blindbox group info <序号>\n"
         "小组列表：/blindbox group list\n"
         "我的小组：/blindbox me\n"
-        "重抽任务：/blindbox redraw [学习|体育|交流|吃喝|全部]\n\n"
+        "重抽任务：/blindbox redraw [分类名称|全部]\n\n"
         "提示：群里每个 QQ 号只能属于一个小组。"
     )
 
@@ -591,6 +618,8 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/redraw", self.api_group_redraw, ["POST"], "重抽小组任务")
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
+        context.register_web_api(f"/{PLUGIN_NAME}/tasks/export-csv", self.api_tasks_export_csv, ["GET"], "导出任务列表为CSV")
+        context.register_web_api(f"/{PLUGIN_NAME}/tasks/import-csv", self.api_tasks_import_csv, ["POST"], "从CSV导入任务列表")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
         context.register_web_api(f"/{PLUGIN_NAME}/api/pending-reviews", self.api_pending_reviews, ["GET"], "获取待确认审核列表")
         context.register_web_api(f"/{PLUGIN_NAME}/api/confirm-review", self.api_confirm_review_endpoint, ["POST"], "管理员确认审核结果")
@@ -682,6 +711,13 @@ class BlindBoxPlugin(Star):
             return await self._load_state()
         return self._state
 
+    async def _get_tasks(self) -> list[dict[str, object]]:
+        state = await self._get_state()
+        tasks = state.get("tasks")
+        if isinstance(tasks, list) and tasks:
+            return _normalize_tasks(tasks)
+        return _normalize_tasks(self.config.get("tasks", DEFAULT_TASKS))
+
     def _normalize_state(self, raw_state: dict[str, object] | None) -> dict[str, object]:
         # 兼容旧状态，把所有结构整理成统一格式后再使用。
         if not isinstance(raw_state, dict):
@@ -742,7 +778,14 @@ class BlindBoxPlugin(Star):
                     "drawn_at": str(draw_data.get("drawn_at", "")),
                 }
 
-        return {"groups": normalized_groups, "member_to_group": member_to_group, "draws": normalized_draws}
+        tasks = raw_state.get("tasks", []) if isinstance(raw_state, dict) else []
+        normalized_tasks = _normalize_tasks(tasks) if isinstance(tasks, list) else []
+        return {
+            "groups": normalized_groups,
+            "member_to_group": member_to_group,
+            "draws": normalized_draws,
+            "tasks": normalized_tasks,
+        }
 
     def _json_ok(self, message: str = "操作成功", data: object | None = None):
         payload = {"success": True, "message": message}
@@ -1013,7 +1056,7 @@ class BlindBoxPlugin(Star):
             "【插件功能说明】\n"
             "- 本插件管理学习小组的'盲盒任务'机制\n"
             "- 每个小组每周可以抽取 1-3 次任务（同一批次上限 3 次）\n"
-            "- 任务分为四类：学习类、体育类、交流类、吃喝类\n"
+            "- 任务按照盲盒清单中定义的分类分组，例如德育、智育、体育、美育、劳动等\n"
             "- 每个任务都附带建议积分\n\n"
             "【你的职责】\n"
             "1. 根据小组提交的材料和当前分配的任务进行审核\n"
@@ -1021,13 +1064,11 @@ class BlindBoxPlugin(Star):
             "3. 作出审核决定（通过/拒绝）并可选择调整积分\n"
             "4. 提供审核意见或拒绝理由\n\n"
             "【审核建议】\n"
-            "- 学习类任务：检查是否提供了实质性的学习内容或交流\n"
-            "- 体育类任务：验证运动相关的证据或截图\n"
-            "- 交流类任务：确认小组成员的参与和互动\n"
-            "- 吃喝类任务：看小组聚餐的证明（照片/截图）\n\n"
+            "- 根据任务标题和分类要求判断提交材料是否满足任务目的\n"
+            "- 重点关注材料是否真实、完整，并符合当前抽取任务的类别方向\n\n"
             "【操作指令】\n"
             "/blindbox - 抽取任务\n"
-            "/blindbox 学习/体育/交流/吃喝 - 指定分类抽取\n"
+            "/blindbox <分类名称> - 指定分类抽取\n"
             "/blindbox group list - 查看所有小组\n"
             "/blindbox group info <序号> - 查看小组详情\n"
             "/blindbox submit <说明> - 提交任务材料\n\n"
@@ -1235,8 +1276,13 @@ class BlindBoxPlugin(Star):
             raise ValueError("只有组长可以抽取或重抽本组任务。")
 
         normalized_category = _normalize_category(category)
-        if normalized_category != "全部" and normalized_category not in TASK_CATEGORIES:
-            raise ValueError("可用分类只有：学习类、体育类、交流类、吃喝类、全部。")
+        tasks = await self._get_tasks()
+        available_categories = _task_categories(tasks)
+        if normalized_category != "全部" and normalized_category not in available_categories:
+            raise ValueError(
+                "可用分类只有：全部，或盲盒清单中已定义的类别。"
+                + (f" 当前可用分类：{', '.join(available_categories)}" if available_categories else " 请先导入任务列表。")
+            )
 
         week = _week_key()
         current_batch = _batch_id()
@@ -1251,7 +1297,6 @@ class BlindBoxPlugin(Star):
                 # 本周已有任务，返回当前任务
                 return current_draw, False, ""
         
-        tasks = _normalize_tasks(self.config.get("tasks", DEFAULT_TASKS))
         # 排除上一次抽到的任务
         exclude_task = current_draw if isinstance(current_draw, dict) else None
         picked = _pick_task(normalized_category, tasks, exclude_task=exclude_task)
@@ -1293,10 +1338,12 @@ class BlindBoxPlugin(Star):
     async def api_state(self):
         async def _handler():
             state = await self._get_state()
+            tasks = await self._get_tasks()
             return {
                 "week": _week_key(),
                 "rules_text": str(self.config.get("rules_text", DEFAULT_RULES_TEXT)),
-                "tasks": _normalize_tasks(self.config.get("tasks", DEFAULT_TASKS)),
+                "tasks": tasks,
+                "categories": _task_categories(tasks),
                 "groups": state.get("groups", {}),
                 "draws": state.get("draws", {}),
             }
@@ -1907,6 +1954,79 @@ class BlindBoxPlugin(Star):
                     logger.exception("写入提交记录失败: %s", gno)
 
             return {"imported_groups": len(grouped)}
+
+        return await self._api_result(_handler)
+
+    async def api_tasks_export_csv(self):
+        async def _handler():
+            tasks = await self._get_tasks()
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(["category", "title", "points", "enabled"])
+            for task in tasks:
+                writer.writerow([
+                    str(task.get("category", "")),
+                    str(task.get("title", "")),
+                    str(task.get("points", "")),
+                    "1" if task.get("enabled", True) else "0",
+                ])
+            return {"csv": csv_buffer.getvalue(), "filename": "blindbox_tasks.csv"}
+
+        return await self._api_result(_handler)
+
+    async def api_tasks_import_csv(self):
+        payload = await self._get_request_json()
+        csv_content = str(payload.get("csv", "")).strip()
+
+        async def _handler():
+            if not csv_content:
+                raise ValueError("CSV 内容不能为空。")
+
+            csv_buffer = StringIO(csv_content)
+            reader = csv.DictReader(csv_buffer)
+            rows = list(reader)
+            if not rows:
+                raise ValueError("CSV 文件为空或格式错误。")
+
+            imported: list[dict[str, object]] = []
+            errors: list[str] = []
+            for index, row in enumerate(rows, start=1):
+                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "")).strip()
+                title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
+                points_raw = str(row.get("points", "") or row.get("task_points", "") or "").strip()
+                enabled_raw = row.get("enabled", row.get("启用", "1"))
+
+                if not category or not title:
+                    errors.append(f"第 {index} 行缺少 category 或 title。")
+                    continue
+
+                try:
+                    points = int(points_raw or 0)
+                except (TypeError, ValueError):
+                    points = 0
+
+                imported.append({
+                    "category": category,
+                    "title": title,
+                    "points": points,
+                    "enabled": _parse_bool(enabled_raw),
+                })
+
+            if not imported:
+                raise ValueError("未解析到有效任务，请检查 CSV 字段是否包含 category 和 title。")
+
+            state = await self._get_state()
+            state["tasks"] = imported
+            await self._save_state()
+
+            categories = _task_categories(imported)
+            return {
+                "success": True,
+                "imported_count": len(imported),
+                "categories": categories,
+                "errors": errors,
+                "message": f"成功导入 {len(imported)} 条任务。当前可用分类：{', '.join(categories)}。",
+            }
 
         return await self._api_result(_handler)
 

@@ -18,10 +18,7 @@
 ## 指令
 
 - `/blindbox`：随机抽取一个盲盒任务。
-- `/blindbox 学习`：只抽学习类任务。
-- `/blindbox 体育`：只抽体育类任务。
-- `/blindbox 交流`：只抽交流类任务。
-- `/blindbox 吃喝`：只抽吃喝类任务。
+- `/blindbox <分类名称>`：按盲盒清单中的分类名称抽取任务。
 - `/blindbox 全部`：从全部任务中随机抽取。
 - `/blindbox group create <序号> <组名> [QQ号...]`：新建小组并可同时加入成员。
 - `/blindbox group add <序号> <QQ号...>`：给已有小组继续添加成员。
