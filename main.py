@@ -13,7 +13,6 @@ from uuid import uuid4
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 from quart import Response, jsonify, request
-from quart_cors import cors
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -2090,9 +2089,7 @@ class BlindBoxPlugin(Star):
                     try:
                         csv_content = content.decode(encoding)
                         detected_encoding = encoding
-                        # 验证解码是否成功（检查是否有中文字符）
-                        if any("\u4e00" <= char <= "\u9fff" for char in csv_content):
-                            break
+                        break  # 成功解码后立即停止
                     except (UnicodeDecodeError, LookupError):
                         continue
 
@@ -2114,29 +2111,39 @@ class BlindBoxPlugin(Star):
             errors = []
 
             for index, row in enumerate(rows, start=1):
-                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or row.get("task_category", "")).strip()
-                title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
-                points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
-                enabled_raw = row.get("enabled", row.get("启用", "1"))
+                try:
+                    category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or row.get("task_category", "")).strip()
+                    title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
+                    points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
+                    enabled_raw = row.get("enabled", row.get("启用", "1"))
 
-                if not category or not title:
-                    errors.append(f"第 {index} 行缺少 category 或 title。")
+                    if not category or not title:
+                        errors.append(f"第 {index} 行：缺少类别或任务名称")
+                        continue
+
+                    try:
+                        points = int(points_raw or 0)
+                        if points < 0:
+                            errors.append(f"第 {index} 行：积分值不能为负数（{points_raw}），使用默认值 0")
+                            points = 0
+                    except (TypeError, ValueError):
+                        errors.append(f"第 {index} 行：积分值不是有效的数字（{points_raw}），使用默认值 0")
+                        points = 0
+
+                    parsed_tasks.append({
+                        "category": category,
+                        "title": title,
+                        "points": points,
+                        "enabled": _parse_bool(enabled_raw),
+                    })
+                except Exception as row_error:
+                    errors.append(f"第 {index} 行处理失败：{str(row_error)}")
+                    logger.error(f"CSV row {index} parsing error: {row_error}, row: {row}")
                     continue
 
-                try:
-                    points = int(points_raw or 0)
-                except (TypeError, ValueError):
-                    points = 0
-
-                parsed_tasks.append({
-                    "category": category,
-                    "title": title,
-                    "points": points,
-                    "enabled": _parse_bool(enabled_raw),
-                })
-
             if not parsed_tasks:
-                return jsonify({"success": False, "message": "未解析到有效任务数据"})
+                error_msg = "未解析到有效任务数据。" + (f"\n错误：{'; '.join(errors[:3])}" if errors else "")
+                return jsonify({"success": False, "message": error_msg})
 
             logger.info(
                 f"CSV upload parsed {len(parsed_tasks)} tasks from file {file.filename} with encoding {detected_encoding}"
