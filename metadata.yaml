@@ -9,8 +9,8 @@ support_platforms:
 astrbot_version: ">=4.16,<5"
 web_pages:
   - name: "小组管理"
-    path: "pages/management"
+    path: "pages/management/index.html"
   - name: "AI审核管理"
-    path: "pages/review"
+    path: "pages/review/index.html"
   - name: "CSV导入"
-    path: "pages/import"
+    path: "pages/import/index.html"

@@ -2061,27 +2061,32 @@ class BlindBoxPlugin(Star):
 
         try:
             # 获取上传的文件
-            files = request.files
-            if inspect.isawaitable(files):
-                files = await files
-            if "file" not in files:
-                return jsonify({"success": False, "message": "没有找到上传的文件"})
+            files = await request.files
+            if not files or "file" not in files:
+                response = jsonify({"success": False, "message": "没有找到上传的文件"})
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                return response
 
             file = files["file"]
             if not file.filename or not file.filename.lower().endswith(".csv"):
-                return jsonify({"success": False, "message": "只支持 CSV 文件"})
+                response = jsonify({"success": False, "message": "只支持 CSV 文件"})
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                return response
 
-            # 读取文件内容
+            # 读取文件内容 - Quart 中文件对象直接读取即可
             content = file.read()
-            if inspect.isawaitable(content):
-                content = await content
-
+            
+            # 确保内容是字节类型
             if isinstance(content, str):
                 csv_content = content
                 detected_encoding = "str"
             elif isinstance(content, (bytes, bytearray)):
-                # 尝试多种编码解析
-                encodings_to_try = ["utf-8", "gbk", "gb2312", "utf-16", "cp1252"]
+                # 尝试多种编码解析，优先尝试 utf-8-sig 以处理 BOM
+                encodings_to_try = ["utf-8-sig", "utf-8", "gbk", "gb2312", "utf-16", "cp1252"]
                 csv_content = None
                 detected_encoding = None
 
@@ -2089,14 +2094,29 @@ class BlindBoxPlugin(Star):
                     try:
                         csv_content = content.decode(encoding)
                         detected_encoding = encoding
+                        logger.info(f"成功使用 {encoding} 编码解码文件")
                         break  # 成功解码后立即停止
-                    except (UnicodeDecodeError, LookupError):
+                    except (UnicodeDecodeError, LookupError) as e:
+                        logger.debug(f"编码 {encoding} 解码失败: {e}")
                         continue
 
                 if csv_content is None:
-                    return jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式"})
+                    response = jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式（支持 UTF-8、GBK 等常见编码）"})
+                    response.headers['Access-Control-Allow-Origin'] = '*'
+                    response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                    return response
             else:
-                return jsonify({"success": False, "message": "无法读取CSV文件内容"})
+                response = jsonify({"success": False, "message": "无法读取CSV文件内容"})
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                return response
+
+            # 清理 BOM 标记（如果存在）
+            if csv_content.startswith('\ufeff'):
+                csv_content = csv_content[1:]
+                logger.info("已移除 BOM 标记")
 
             # 解析 CSV
             csv_buffer = StringIO(csv_content)
@@ -2104,7 +2124,15 @@ class BlindBoxPlugin(Star):
             rows = list(reader)
 
             if not rows:
-                return jsonify({"success": False, "message": "CSV 文件为空"})
+                response = jsonify({"success": False, "message": "CSV 文件为空或没有有效数据行"})
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                return response
+
+            # 记录字段名以便调试
+            fieldnames = reader.fieldnames
+            logger.info(f"CSV 字段名: {fieldnames}")
 
             # 解析任务数据
             parsed_tasks = []
@@ -2112,9 +2140,21 @@ class BlindBoxPlugin(Star):
 
             for index, row in enumerate(rows, start=1):
                 try:
-                    category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or row.get("task_category", "")).strip()
-                    title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
-                    points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
+                    # 支持多种字段名称映射
+                    category = str(row.get("category", "") or 
+                                  row.get("类别", "") or 
+                                  row.get("种类", "") or 
+                                  row.get("tag", "") or 
+                                  row.get("task_category", "") or "").strip()
+                    
+                    title = str(row.get("title", "") or 
+                               row.get("任务", "") or 
+                               row.get("task_title", "") or "").strip()
+                    
+                    points_raw = str(row.get("points", "") or 
+                                    row.get("task_points", "") or 
+                                    row.get("积分值", "") or "").strip()
+                    
                     enabled_raw = row.get("enabled", row.get("启用", "1"))
 
                     if not category or not title:
@@ -2143,7 +2183,11 @@ class BlindBoxPlugin(Star):
 
             if not parsed_tasks:
                 error_msg = "未解析到有效任务数据。" + (f"\n错误：{'; '.join(errors[:3])}" if errors else "")
-                return jsonify({"success": False, "message": error_msg})
+                response = jsonify({"success": False, "message": error_msg})
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+                return response
 
             logger.info(
                 f"CSV upload parsed {len(parsed_tasks)} tasks from file {file.filename} with encoding {detected_encoding}"
@@ -2165,7 +2209,7 @@ class BlindBoxPlugin(Star):
             return response
 
         except Exception as e:
-            logger.error(f"CSV upload error: {e}")
+            logger.error(f"CSV upload error: {e}", exc_info=True)
             response = jsonify({"success": False, "message": f"上传处理失败: {str(e)}"})
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
