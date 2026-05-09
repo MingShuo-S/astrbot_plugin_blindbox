@@ -924,6 +924,29 @@ class BlindBoxPlugin(Star):
         raise ValueError("无法获取发送者 QQ 号。")
 
     @staticmethod
+    def _get_group_id(event: AstrMessageEvent) -> str:
+        """从事件中提取群号"""
+        msg_obj = getattr(event, "message_obj", None)
+        if not msg_obj:
+            raise ValueError("无法获取群信息")
+        
+        # 尝试多个可能的属性名
+        for attr in ("group_id", "group", "chat_id", "room_id", "room"):
+            value = getattr(msg_obj, attr, None)
+            if value is not None:
+                return str(value)
+        raise ValueError("无法获取群号")
+
+    def _check_group_whitelist(self, group_id: str) -> bool:
+        """检查群号是否在白名单内，如果白名单为空则允许所有群"""
+        whitelist_str = str(self.config.get("group_whitelist", "") or "").strip()
+        if not whitelist_str:
+            return True
+        
+        allowed_groups = set(g.strip() for g in whitelist_str.split(",") if g.strip())
+        return group_id in allowed_groups
+
+    @staticmethod
     def _build_group_summary(group_no: str, group_data: dict[str, object]) -> str:
         members = group_data.get("members", [])
         member_text = "、".join(str(member) for member in members) if members else "无"
@@ -2616,6 +2639,15 @@ class BlindBoxPlugin(Star):
             return jsonify({"success": False, "error": str(e)})
 
     async def _handle_draw(self, event: AstrMessageEvent, args: list[str], force_redraw: bool = False):
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                yield event.plain_result("请在大群抽取盲盒与任务提交~")
+                return
+        except ValueError:
+            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            return
+
         sender_id = self._get_sender_id(event)
         group_no, group_data = await self._find_group_by_member(sender_id)
         if not group_no or not group_data:
@@ -2783,6 +2815,15 @@ class BlindBoxPlugin(Star):
         )
 
     async def _handle_submit(self, event: AstrMessageEvent, args: list[str]):
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                yield event.plain_result("请在大群抽取盲盒与任务提交~")
+                return
+        except ValueError:
+            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            return
+
         sender_id = self._get_sender_id(event)
         group_no, group_data = await self._find_group_by_member(sender_id)
         if not group_no or not group_data:
