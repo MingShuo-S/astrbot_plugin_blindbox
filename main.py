@@ -741,15 +741,15 @@ class BlindBoxPlugin(Star):
                         errors: list[str] = []
                         for index, row in enumerate(rows, start=1):
                             category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or "").strip()
-                                title = str(
-                                    row.get("title", "")
-                                    or row.get("名字", "")
-                                    or row.get("任务内容", "")
-                                    or row.get("任务", "")
-                                    or row.get("task_title", "")
-                                    or ""
-                                ).strip()
-                                points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
+                            title = str(
+                                row.get("title", "")
+                                or row.get("名字", "")
+                                or row.get("任务内容", "")
+                                or row.get("任务", "")
+                                or row.get("task_title", "")
+                                or ""
+                            ).strip()
+                            points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
                             enabled_raw = row.get("enabled", row.get("启用", "1"))
 
                             if not category or not title:
@@ -2081,7 +2081,7 @@ class BlindBoxPlugin(Star):
 
             imported: list[dict[str, object]] = []
             errors: list[str] = []
-                for index, row in enumerate(rows, start=1):
+            for index, row in enumerate(rows, start=1):
                 category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "") ).strip()
                 title = str(
                     row.get("title", "")
