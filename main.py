@@ -2046,7 +2046,7 @@ class BlindBoxPlugin(Star):
                 return jsonify({"success": False, "message": "只支持 CSV 文件"})
 
             # 读取文件内容
-            content = await file.read()
+            content = file.read()
 
             # 尝试多种编码解析
             encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'utf-16', 'cp1252']
