@@ -2053,23 +2053,29 @@ class BlindBoxPlugin(Star):
             if inspect.isawaitable(content):
                 content = await content
 
-            # 尝试多种编码解析
-            encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'utf-16', 'cp1252']
-            csv_content = None
-            detected_encoding = None
+            if isinstance(content, str):
+                csv_content = content
+                detected_encoding = "str"
+            elif isinstance(content, (bytes, bytearray)):
+                # 尝试多种编码解析
+                encodings_to_try = ["utf-8", "gbk", "gb2312", "utf-16", "cp1252"]
+                csv_content = None
+                detected_encoding = None
 
-            for encoding in encodings_to_try:
-                try:
-                    csv_content = content.decode(encoding)
-                    detected_encoding = encoding
-                    # 验证解码是否成功（检查是否有中文字符）
-                    if any('\u4e00' <= char <= '\u9fff' for char in csv_content):
-                        break
-                except (UnicodeDecodeError, LookupError):
-                    continue
+                for encoding in encodings_to_try:
+                    try:
+                        csv_content = content.decode(encoding)
+                        detected_encoding = encoding
+                        # 验证解码是否成功（检查是否有中文字符）
+                        if any("\u4e00" <= char <= "\u9fff" for char in csv_content):
+                            break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
 
-            if csv_content is None:
-                return jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式"})
+                if csv_content is None:
+                    return jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式"})
+            else:
+                return jsonify({"success": False, "message": "无法读取CSV文件内容"})
 
             # 解析 CSV
             csv_buffer = StringIO(csv_content)

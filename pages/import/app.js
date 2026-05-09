@@ -98,7 +98,18 @@ async function uploadCSV(file) {
       body: formData,
     });
 
-    const result = await response.json();
+    let result;
+    if (response.ok) {
+      try {
+        result = await response.json();
+      } catch (jsonError) {
+        const text = await response.text();
+        throw new Error(`服务器返回非JSON响应: ${text}`);
+      }
+    } else {
+      const text = await response.text();
+      throw new Error(`上传失败: ${response.status} ${response.statusText} ${text}`);
+    }
 
     if (result.success) {
       uploadedData = result.data;
@@ -110,7 +121,7 @@ async function uploadCSV(file) {
     }
   } catch (error) {
     console.error("Upload error:", error);
-    showMessage(uploadMessageEl, "上传过程中发生错误", "error");
+    showMessage(uploadMessageEl, String(error), "error");
   } finally {
     uploadBtn.disabled = false;
   }
@@ -134,7 +145,18 @@ async function confirmImport() {
       body: JSON.stringify({ data: uploadedData }),
     });
 
-    const result = await response.json();
+    let result;
+    if (response.ok) {
+      try {
+        result = await response.json();
+      } catch (jsonError) {
+        const text = await response.text();
+        throw new Error(`服务器返回非JSON响应: ${text}`);
+      }
+    } else {
+      const text = await response.text();
+      throw new Error(`导入失败: ${response.status} ${response.statusText} ${text}`);
+    }
 
     if (result.success) {
       showMessage(confirmMessageEl, result.message || "导入成功", "ok");
@@ -149,7 +171,7 @@ async function confirmImport() {
     }
   } catch (error) {
     console.error("Import error:", error);
-    showMessage(confirmMessageEl, "导入过程中发生错误", "error");
+    showMessage(confirmMessageEl, String(error), "error");
     confirmBtn.disabled = false;
   }
 }
