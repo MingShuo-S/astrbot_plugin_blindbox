@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import inspect
 import json
 import shlex
 from datetime import datetime
@@ -2038,6 +2039,8 @@ class BlindBoxPlugin(Star):
         try:
             # 获取上传的文件
             files = request.files
+            if inspect.isawaitable(files):
+                files = await files
             if "file" not in files:
                 return jsonify({"success": False, "message": "没有找到上传的文件"})
 
@@ -2047,6 +2050,8 @@ class BlindBoxPlugin(Star):
 
             # 读取文件内容
             content = file.read()
+            if inspect.isawaitable(content):
+                content = await content
 
             # 尝试多种编码解析
             encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'utf-16', 'cp1252']
@@ -2103,6 +2108,9 @@ class BlindBoxPlugin(Star):
             if not parsed_tasks:
                 return jsonify({"success": False, "message": "未解析到有效任务数据"})
 
+            logger.info(
+                f"CSV upload parsed {len(parsed_tasks)} tasks from file {file.filename} with encoding {detected_encoding}"
+            )
             return jsonify({
                 "success": True,
                 "data": {
