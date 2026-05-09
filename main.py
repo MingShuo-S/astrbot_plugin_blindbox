@@ -89,36 +89,36 @@ DEFAULT_TASKS = [
     {"category": "以劳励行", "title": "深夜食堂盲盒操作", "points": 10, "enabled": True},
 ]
 
-TASK_CATEGORIES = ["以智增慧", "以体强身", "以德润心", "以美立美", "以劳励行"]
+TASK_CATEGORIES = ["【以智增慧】", "【以体强身】", "【以德润心】", "【以美立美】", "【以劳励行】"]
 CATEGORY_ALIASES = {
     "全部": "全部",
     "all": "全部",
     "random": "全部",
     "随机": "全部",
-    "德": "以德润心",
-    "以德润心": "以德润心",
-    "以德润心类": "以德润心",
-    "德育": "以德润心",
-    "品德": "以德润心",
-    "智": "以智增慧",
-    "以智增慧": "以智增慧",
-    "以智增慧类": "以智增慧",
-    "智育": "以智增慧",
-    "体": "以体强身",
-    "以体强身": "以体强身",
-    "以体强身类": "以体强身",
-    "体育": "以体强身",
-    "身体": "以体强身",
-    "美": "以美立美",
-    "以美立美": "以美立美",
-    "以美立美类": "以美立美",
-    "美育": "以美立美",
-    "艺术": "以美立美",
-    "劳": "以劳励行",
-    "以劳励行": "以劳励行",
-    "以劳励行类": "以劳励行",
-    "劳育": "以劳励行",
-    "劳动": "以劳励行",
+    "德": "【以德润心】",
+    "以德润心": "【以德润心】",
+    "以德润心类": "【以德润心】",
+    "德育": "【以德润心】",
+    "品德": "【以德润心】",
+    "智": "【以智增慧】",
+    "以智增慧": "【以智增慧】",
+    "以智增慧类": "【以智增慧】",
+    "智育": "【以智增慧】",
+    "体": "【以体强身】",
+    "以体强身": "【以体强身】",
+    "以体强身类": "【以体强身】",
+    "体育": "【以体强身】",
+    "身体": "【以体强身】",
+    "美": "【以美立美】",
+    "以美立美": "【以美立美】",
+    "以美立美类": "【以美立美】",
+    "美育": "【以美立美】",
+    "艺术": "【以美立美】",
+    "劳": "【以劳励行】",
+    "以劳励行": "【以劳励行】",
+    "以劳励行类": "【以劳励行】",
+    "劳育": "【以劳励行】",
+    "劳动": "【以劳励行】",
 }
 
 
@@ -883,6 +883,8 @@ class BlindBoxPlugin(Star):
                     "points": int(draw_data.get("points", 0)),
                     "drawn_at": str(draw_data.get("drawn_at", "")),
                 }
+                if "description" in draw_data:
+                    normalized_draws[str(group_no)]["description"] = str(draw_data.get("description", ""))
 
         tasks = raw_state.get("tasks", []) if isinstance(raw_state, dict) else []
         normalized_tasks = _normalize_tasks(tasks) if isinstance(tasks, list) else []
@@ -1426,6 +1428,8 @@ class BlindBoxPlugin(Star):
             "points": int(picked["points"]),
             "drawn_at": _timestamp(),
         }
+        if "description" in picked:
+            draw_data["description"] = str(picked["description"])
         draws[str(group_no)] = draw_data
         await self._save_state()
         status_msg = f"(本批次第 {new_draw_count}/3 次抽取)" if new_draw_count <= 3 else ""
@@ -2626,6 +2630,8 @@ class BlindBoxPlugin(Star):
             "title": draw_data.get("title", ""),
             "points": draw_data.get("points", 0),
         }
+        if "description" in draw_data:
+            task["description"] = draw_data.get("description")
 
         lines = [
             _format_task(task, rules_text),
