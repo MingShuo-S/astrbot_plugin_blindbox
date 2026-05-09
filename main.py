@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 from quart import Response, jsonify, request
+from quart_cors import cors
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -2117,7 +2118,7 @@ class BlindBoxPlugin(Star):
             logger.info(
                 f"CSV upload parsed {len(parsed_tasks)} tasks from file {file.filename} with encoding {detected_encoding}"
             )
-            return jsonify({
+            response = jsonify({
                 "success": True,
                 "data": {
                     "tasks": parsed_tasks,
@@ -2128,10 +2129,18 @@ class BlindBoxPlugin(Star):
                 },
                 "message": f"成功解析 {len(parsed_tasks)} 条任务数据 (编码: {detected_encoding})",
             })
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
 
         except Exception as e:
             logger.error(f"CSV upload error: {e}")
-            return jsonify({"success": False, "message": f"上传处理失败: {str(e)}"})
+            response = jsonify({"success": False, "message": f"上传处理失败: {str(e)}"})
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
 
     async def api_csv_import(self):
         """确认导入解析后的 CSV 数据"""
@@ -2173,16 +2182,24 @@ class BlindBoxPlugin(Star):
             await self._save_state()
 
             categories = _task_categories(validated_tasks)
-            return jsonify({
+            response = jsonify({
                 "success": True,
                 "message": f"成功导入 {len(validated_tasks)} 条任务。当前可用分类：{', '.join(categories)}。",
                 "imported_count": len(validated_tasks),
                 "categories": categories,
             })
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
 
         except Exception as e:
             logger.error(f"CSV import error: {e}")
-            return jsonify({"success": False, "message": f"导入失败: {str(e)}"})
+            response = jsonify({"success": False, "message": f"导入失败: {str(e)}"})
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
 
     async def api_tasks_stats(self):
         """获取任务导入统计信息"""
@@ -2211,7 +2228,11 @@ class BlindBoxPlugin(Star):
 
         except Exception as e:
             logger.error(f"Tasks stats error: {e}")
-            return jsonify({"success": False, "message": f"获取统计信息失败: {str(e)}"})
+            response = jsonify({"success": False, "message": f"获取统计信息失败: {str(e)}"})
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
 
     # ----------------------------
     # 群消息命令入口
