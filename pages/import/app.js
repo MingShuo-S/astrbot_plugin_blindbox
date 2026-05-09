@@ -12,6 +12,7 @@ const previewContainerEl = document.getElementById("previewContainer");
 const confirmContainerEl = document.getElementById("confirmContainer");
 const confirmBtn = document.getElementById("confirmBtn");
 const confirmMessageEl = document.getElementById("confirmMessage");
+const testBtn = document.getElementById("testBtn");
 
 let pageContext = null;
 let uploadedData = null;
@@ -190,8 +191,26 @@ async function refreshStats() {
   }
 }
 
+async function testConnection() {
+  try {
+    showMessage(uploadMessageEl, "正在测试连接...", "info");
+    const response = await fetch("/astrbot_plugin_blindbox/test");
+    const result = await response.json();
+
+    if (result.success) {
+      showMessage(uploadMessageEl, `连接正常: ${result.message}`, "ok");
+    } else {
+      showMessage(uploadMessageEl, result.message || "连接测试失败", "error");
+    }
+  } catch (error) {
+    console.error("Test connection error:", error);
+    showMessage(uploadMessageEl, `连接失败: ${String(error)}`, "error");
+  }
+}
+
 // Event listeners
 refreshBtn.addEventListener("click", refreshStats);
+testBtn.addEventListener("click", testConnection);
 
 uploadForm.addEventListener("submit", async (e) => {
   e.preventDefault();

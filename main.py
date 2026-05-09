@@ -628,6 +628,22 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/csv/upload", self.api_csv_upload, ["POST", "OPTIONS"], "上传CSV文件进行预览")
         context.register_web_api(f"/{PLUGIN_NAME}/csv/import", self.api_csv_import, ["POST", "OPTIONS"], "确认导入CSV数据")
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/stats", self.api_tasks_stats, ["GET", "OPTIONS"], "获取任务导入统计信息")
+        context.register_web_api(f"/{PLUGIN_NAME}/test", self.api_test, ["GET", "OPTIONS"], "测试API连接")
+
+    async def api_test(self):
+        """测试 API 连接"""
+        if request.method == "OPTIONS":
+            response = Response("", status=200)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
+
+        response = jsonify({"success": True, "message": "API 连接正常", "timestamp": datetime.now().isoformat()})
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
