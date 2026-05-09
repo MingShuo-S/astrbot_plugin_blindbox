@@ -623,6 +623,9 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
         context.register_web_api(f"/{PLUGIN_NAME}/api/pending-reviews", self.api_pending_reviews, ["GET"], "获取待确认审核列表")
         context.register_web_api(f"/{PLUGIN_NAME}/api/confirm-review", self.api_confirm_review_endpoint, ["POST"], "管理员确认审核结果")
+        context.register_web_api(f"/{PLUGIN_NAME}/csv/upload", self.api_csv_upload, ["POST"], "上传CSV文件进行预览")
+        context.register_web_api(f"/{PLUGIN_NAME}/csv/import", self.api_csv_import, ["POST"], "确认导入CSV数据")
+        context.register_web_api(f"/{PLUGIN_NAME}/tasks/stats", self.api_tasks_stats, ["GET"], "获取任务导入统计信息")
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
@@ -2029,6 +2032,154 @@ class BlindBoxPlugin(Star):
             }
 
         return await self._api_result(_handler)
+
+    async def api_csv_upload(self):
+        """上传 CSV 文件并解析预览数据"""
+        try:
+            # 获取上传的文件
+            files = await request.files
+            if "file" not in files:
+                return jsonify({"success": False, "message": "没有找到上传的文件"})
+
+            file = files["file"]
+            if not file.filename or not file.filename.lower().endswith(".csv"):
+                return jsonify({"success": False, "message": "只支持 CSV 文件"})
+
+            # 读取文件内容
+            content = await file.read()
+            csv_content = content.decode("utf-8")
+
+            # 解析 CSV
+            csv_buffer = StringIO(csv_content)
+            reader = csv.DictReader(csv_buffer)
+            rows = list(reader)
+
+            if not rows:
+                return jsonify({"success": False, "message": "CSV 文件为空"})
+
+            # 解析任务数据
+            parsed_tasks = []
+            errors = []
+
+            for index, row in enumerate(rows, start=1):
+                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "")).strip()
+                title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
+                points_raw = str(row.get("points", "") or row.get("task_points", "") or "").strip()
+                enabled_raw = row.get("enabled", row.get("启用", "1"))
+
+                if not category or not title:
+                    errors.append(f"第 {index} 行缺少 category 或 title。")
+                    continue
+
+                try:
+                    points = int(points_raw or 0)
+                except (TypeError, ValueError):
+                    points = 0
+
+                parsed_tasks.append({
+                    "category": category,
+                    "title": title,
+                    "points": points,
+                    "enabled": _parse_bool(enabled_raw),
+                })
+
+            if not parsed_tasks:
+                return jsonify({"success": False, "message": "未解析到有效任务数据"})
+
+            return jsonify({
+                "success": True,
+                "data": {
+                    "tasks": parsed_tasks,
+                    "total_rows": len(rows),
+                    "parsed_count": len(parsed_tasks),
+                    "errors": errors,
+                },
+                "message": f"成功解析 {len(parsed_tasks)} 条任务数据",
+            })
+
+        except Exception as e:
+            logger.error(f"CSV upload error: {e}")
+            return jsonify({"success": False, "message": f"上传处理失败: {str(e)}"})
+
+    async def api_csv_import(self):
+        """确认导入解析后的 CSV 数据"""
+        try:
+            payload = await self._get_request_json()
+            data = payload.get("data", {})
+
+            if not data or "tasks" not in data:
+                return jsonify({"success": False, "message": "无效的导入数据"})
+
+            tasks = data["tasks"]
+            if not isinstance(tasks, list) or not tasks:
+                return jsonify({"success": False, "message": "任务数据为空"})
+
+            # 验证任务数据格式
+            validated_tasks = []
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                category = str(task.get("category", "")).strip()
+                title = str(task.get("title", "")).strip()
+                points = int(task.get("points", 0))
+                enabled = bool(task.get("enabled", True))
+
+                if category and title:
+                    validated_tasks.append({
+                        "category": category,
+                        "title": title,
+                        "points": points,
+                        "enabled": enabled,
+                    })
+
+            if not validated_tasks:
+                return jsonify({"success": False, "message": "没有有效的任务数据"})
+
+            # 保存到状态
+            state = await self._get_state()
+            state["tasks"] = validated_tasks
+            await self._save_state()
+
+            categories = _task_categories(validated_tasks)
+            return jsonify({
+                "success": True,
+                "message": f"成功导入 {len(validated_tasks)} 条任务。当前可用分类：{', '.join(categories)}。",
+                "imported_count": len(validated_tasks),
+                "categories": categories,
+            })
+
+        except Exception as e:
+            logger.error(f"CSV import error: {e}")
+            return jsonify({"success": False, "message": f"导入失败: {str(e)}"})
+
+    async def api_tasks_stats(self):
+        """获取任务导入统计信息"""
+        try:
+            state = await self._get_state()
+            tasks = state.get("tasks", [])
+
+            if not isinstance(tasks, list):
+                tasks = []
+
+            # 计算统计信息
+            total_tasks = len(tasks)
+            enabled_tasks = len([t for t in tasks if t.get("enabled", True)])
+            categories = _task_categories(tasks)
+
+            return jsonify({
+                "success": True,
+                "data": {
+                    "total": total_tasks,
+                    "enabled": enabled_tasks,
+                    "disabled": total_tasks - enabled_tasks,
+                    "categories": len(categories),
+                    "category_list": categories,
+                },
+            })
+
+        except Exception as e:
+            logger.error(f"Tasks stats error: {e}")
+            return jsonify({"success": False, "message": f"获取统计信息失败: {str(e)}"})
 
     # ----------------------------
     # 群消息命令入口

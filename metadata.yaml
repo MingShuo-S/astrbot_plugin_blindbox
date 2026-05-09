@@ -7,3 +7,10 @@ short_desc: WebUI 管理的小组抽奖盲盒
 support_platforms:
   - qq_official
 astrbot_version: ">=4.16,<5"
+web_pages:
+  - name: "小组管理"
+    path: "pages/management"
+  - name: "AI审核管理"
+    path: "pages/review"
+  - name: "CSV导入"
+    path: "pages/import"
