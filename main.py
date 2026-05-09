@@ -2037,7 +2037,7 @@ class BlindBoxPlugin(Star):
         """上传 CSV 文件并解析预览数据"""
         try:
             # 获取上传的文件
-            files = await request.files
+            files = request.files
             if "file" not in files:
                 return jsonify({"success": False, "message": "没有找到上传的文件"})
 
