@@ -272,9 +272,14 @@ def _normalize_tasks(raw_tasks: object) -> list[dict[str, object]]:
         except (TypeError, ValueError):
             points = 0
         enabled = bool(item.get("enabled", True))
+        description = str(item.get("description", "")).strip()
 
         if category and title:
-            tasks.append({"category": category, "title": title, "points": points, "enabled": enabled})
+            normalized_category = _normalize_category(category)
+            task_entry = {"category": normalized_category, "title": title, "points": points, "enabled": enabled}
+            if description:
+                task_entry["description"] = description
+            tasks.append(task_entry)
 
     return tasks
 
@@ -348,14 +353,20 @@ def _parse_qq_list(value: object) -> list[str]:
 
 def _format_task(task: dict[str, object], rules_text: str) -> str:
     base_text = rules_text.strip() or DEFAULT_RULES_TEXT
-    return (
+    result = (
         "【南京大学行知×开甲 学习小组 · 抽奖盲盒】\n"
         f"本次抽到：{task['category']} - {task['title']}\n"
         f"建议积分：{task['points']} 分\n\n"
+    )
+    description = str(task.get("description", "")).strip()
+    if description:
+        result += f"任务说明：\n{description}\n\n"
+    result += (
         "具体规则：\n"
         f"{base_text}\n\n"
         "发送 /blindbox <分类名称> 或 /blindbox 全部 可再次抽取。"
     )
+    return result
 
 
 def _format_help() -> str:
@@ -744,13 +755,13 @@ class BlindBoxPlugin(Star):
                             title = str(
                                 row.get("title", "")
                                 or row.get("名字", "")
-                                or row.get("任务内容", "")
                                 or row.get("任务", "")
                                 or row.get("task_title", "")
                                 or ""
                             ).strip()
                             points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
                             enabled_raw = row.get("enabled", row.get("启用", "1"))
+                            description = str(row.get("description", "") or row.get("说明", "") or row.get("解释", "") or row.get("任务内容", "") or "").strip()
 
                             if not category or not title:
                                 errors.append(f"第 {index} 行：缺少类别或任务名称")
@@ -765,12 +776,16 @@ class BlindBoxPlugin(Star):
                                 errors.append(f"第 {index} 行：积分值不是有效的数字（{points_raw}），使用默认值 0")
                                 points = 0
 
-                            parsed.append({
-                                "category": category,
+                            normalized_category = _normalize_category(category)
+                            task_entry = {
+                                "category": normalized_category,
                                 "title": title,
                                 "points": points,
                                 "enabled": _parse_bool(enabled_raw),
-                            })
+                            }
+                            if description:
+                                task_entry["description"] = description
+                            parsed.append(task_entry)
 
                         if parsed:
                             state["tasks"] = parsed
@@ -2086,12 +2101,12 @@ class BlindBoxPlugin(Star):
                 title = str(
                     row.get("title", "")
                     or row.get("名字", "")
-                    or row.get("任务内容", "")
                     or row.get("任务", "")
                     or row.get("task_title", "")
                 ).strip()
                 points_raw = str(row.get("points", "") or row.get("task_points", "") or "").strip()
                 enabled_raw = row.get("enabled", row.get("启用", "1"))
+                description = str(row.get("description", "") or row.get("说明", "") or row.get("解释", "") or row.get("任务内容", "") or "").strip()
 
                 if not category or not title:
                     errors.append(f"第 {index} 行缺少 category 或 title。")
@@ -2102,12 +2117,16 @@ class BlindBoxPlugin(Star):
                 except (TypeError, ValueError):
                     points = 0
 
-                imported.append({
-                    "category": category,
+                normalized_category = _normalize_category(category)
+                task_entry = {
+                    "category": normalized_category,
                     "title": title,
                     "points": points,
                     "enabled": _parse_bool(enabled_raw),
-                })
+                }
+                if description:
+                    task_entry["description"] = description
+                imported.append(task_entry)
 
             if not imported:
                 raise ValueError("未解析到有效任务，请检查 CSV 字段是否包含 category 和 title。")
@@ -2165,13 +2184,13 @@ class BlindBoxPlugin(Star):
                 title = str(
                     row.get("title", "")
                     or row.get("名字", "")
-                    or row.get("任务内容", "")
                     or row.get("任务", "")
                     or row.get("task_title", "")
                     or ""
                 ).strip()
                 points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
                 enabled_raw = row.get("enabled", row.get("启用", "1"))
+                description = str(row.get("description", "") or row.get("说明", "") or row.get("解释", "") or row.get("任务内容", "") or "").strip()
 
                 if not category or not title:
                     errors.append(f"第 {index} 行缺少 category 或 title。")
@@ -2182,12 +2201,16 @@ class BlindBoxPlugin(Star):
                 except (TypeError, ValueError):
                     points = 0
 
-                imported.append({
-                    "category": category,
+                normalized_category = _normalize_category(category)
+                task_entry = {
+                    "category": normalized_category,
                     "title": title,
                     "points": points,
                     "enabled": _parse_bool(enabled_raw),
-                })
+                }
+                if description:
+                    task_entry["description"] = description
+                imported.append(task_entry)
 
             if not imported:
                 response = jsonify({"success": False, "message": "未解析到有效任务，请检查 CSV 字段是否包含 category 和 title。", "errors": errors})
