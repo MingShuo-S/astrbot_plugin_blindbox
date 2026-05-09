@@ -98,18 +98,27 @@ CATEGORY_ALIASES = {
     "德": "以德润心",
     "以德润心": "以德润心",
     "以德润心类": "以德润心",
+    "德育": "以德润心",
+    "品德": "以德润心",
     "智": "以智增慧",
     "以智增慧": "以智增慧",
     "以智增慧类": "以智增慧",
+    "智育": "以智增慧",
     "体": "以体强身",
     "以体强身": "以体强身",
     "以体强身类": "以体强身",
+    "体育": "以体强身",
+    "身体": "以体强身",
     "美": "以美立美",
     "以美立美": "以美立美",
     "以美立美类": "以美立美",
+    "美育": "以美立美",
+    "艺术": "以美立美",
     "劳": "以劳励行",
     "以劳励行": "以劳励行",
     "以劳励行类": "以劳励行",
+    "劳育": "以劳励行",
+    "劳动": "以劳励行",
 }
 
 
@@ -621,11 +630,12 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/export-csv", self.api_tasks_export_csv, ["GET"], "导出任务列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/import-csv", self.api_tasks_import_csv, ["POST"], "从CSV导入任务列表")
+        # 从插件配置中的 CSV 文本导入任务（POST 可触发导入）
+        context.register_web_api(f"/{PLUGIN_NAME}/config/import-tasks", self.api_config_import_tasks, ["POST"], "从插件配置的 CSV 文本导入任务")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
         context.register_web_api(f"/{PLUGIN_NAME}/api/pending-reviews", self.api_pending_reviews, ["GET"], "获取待确认审核列表")
         context.register_web_api(f"/{PLUGIN_NAME}/api/confirm-review", self.api_confirm_review_endpoint, ["POST"], "管理员确认审核结果")
-        context.register_web_api(f"/{PLUGIN_NAME}/csv/upload", self.api_csv_upload, ["POST", "OPTIONS"], "上传CSV文件进行预览")
-        context.register_web_api(f"/{PLUGIN_NAME}/csv/import", self.api_csv_import, ["POST", "OPTIONS"], "确认导入CSV数据")
+        # CSV upload/import via pages deprecated; use plugin config (`tasks_csv_text` / `groups_json`) instead.
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/stats", self.api_tasks_stats, ["GET", "OPTIONS"], "获取任务导入统计信息")
         context.register_web_api(f"/{PLUGIN_NAME}/test", self.api_test, ["GET", "OPTIONS"], "测试API连接")
 
@@ -709,6 +719,67 @@ class BlindBoxPlugin(Star):
                         self._state = state
         except Exception:
             logger.exception("导入配置中的小组数据失败")
+
+        # 如果插件配置中包含 tasks_csv_text，可以选择性地自动解析并导入任务列表
+        try:
+            cfg_csv = None
+            auto_import = False
+            if isinstance(self.config, dict):
+                cfg_csv = str(self.config.get("tasks_csv_text", "") or "").strip()
+                auto_import = bool(self.config.get("tasks_csv_auto_import", False))
+
+            if cfg_csv:
+                state = await self._get_state()
+                existing_tasks = state.get("tasks", []) if isinstance(state, dict) else []
+                should_import = auto_import or not existing_tasks
+                if should_import:
+                    try:
+                        csv_buffer = StringIO(cfg_csv)
+                        reader = csv.DictReader(csv_buffer)
+                        rows = list(reader)
+                        parsed: list[dict[str, object]] = []
+                        errors: list[str] = []
+                        for index, row in enumerate(rows, start=1):
+                            category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or "").strip()
+                                title = str(
+                                    row.get("title", "")
+                                    or row.get("名字", "")
+                                    or row.get("任务内容", "")
+                                    or row.get("任务", "")
+                                    or row.get("task_title", "")
+                                    or ""
+                                ).strip()
+                                points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
+                            enabled_raw = row.get("enabled", row.get("启用", "1"))
+
+                            if not category or not title:
+                                errors.append(f"第 {index} 行：缺少类别或任务名称")
+                                continue
+
+                            try:
+                                points = int(points_raw or 0)
+                                if points < 0:
+                                    errors.append(f"第 {index} 行：积分值不能为负数（{points_raw}），使用默认值 0")
+                                    points = 0
+                            except (TypeError, ValueError):
+                                errors.append(f"第 {index} 行：积分值不是有效的数字（{points_raw}），使用默认值 0")
+                                points = 0
+
+                            parsed.append({
+                                "category": category,
+                                "title": title,
+                                "points": points,
+                                "enabled": _parse_bool(enabled_raw),
+                            })
+
+                        if parsed:
+                            state["tasks"] = parsed
+                            await self._save_state()
+                            logger.info(f"从插件配置导入 {len(parsed)} 条任务（errors={len(errors)})")
+                    except Exception:
+                        logger.exception("从插件配置解析 CSV 导入任务失败")
+        except Exception:
+            logger.exception("读取插件配置的 CSV 文本失败")
 
     # ----------------------------
     # 状态读写：KV 里保存小组、映射和抽取结果
@@ -2010,9 +2081,15 @@ class BlindBoxPlugin(Star):
 
             imported: list[dict[str, object]] = []
             errors: list[str] = []
-            for index, row in enumerate(rows, start=1):
-                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "")).strip()
-                title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
+                for index, row in enumerate(rows, start=1):
+                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "") ).strip()
+                title = str(
+                    row.get("title", "")
+                    or row.get("名字", "")
+                    or row.get("任务内容", "")
+                    or row.get("任务", "")
+                    or row.get("task_title", "")
+                ).strip()
                 points_raw = str(row.get("points", "") or row.get("task_points", "") or "").strip()
                 enabled_raw = row.get("enabled", row.get("启用", "1"))
 
@@ -2050,8 +2127,8 @@ class BlindBoxPlugin(Star):
 
         return await self._api_result(_handler)
 
-    async def api_csv_upload(self):
-        """上传 CSV 文件并解析预览数据"""
+    async def api_config_import_tasks(self):
+        """从插件配置中的 `tasks_csv_text` 字段解析并导入任务列表。可通过 POST 触发，返回解析结果。"""
         if request.method == "OPTIONS":
             response = Response("", status=200)
             response.headers['Access-Control-Allow-Origin'] = '*'
@@ -2060,227 +2137,84 @@ class BlindBoxPlugin(Star):
             return response
 
         try:
-            # 获取上传的文件
-            files = await request.files
-            if not files or "file" not in files:
-                response = jsonify({"success": False, "message": "没有找到上传的文件"})
+            cfg_csv = None
+            if isinstance(self.config, dict):
+                cfg_csv = str(self.config.get("tasks_csv_text", "") or "").strip()
+
+            if not cfg_csv:
+                response = jsonify({"success": False, "message": "插件配置中未找到 tasks_csv_text 内容"})
                 response.headers['Access-Control-Allow-Origin'] = '*'
                 response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
                 response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
                 return response
 
-            file = files["file"]
-            if not file.filename or not file.filename.lower().endswith(".csv"):
-                response = jsonify({"success": False, "message": "只支持 CSV 文件"})
-                response.headers['Access-Control-Allow-Origin'] = '*'
-                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-                return response
-
-            # 读取文件内容 - Quart 中文件对象直接读取即可
-            content = file.read()
-            
-            # 确保内容是字节类型
-            if isinstance(content, str):
-                csv_content = content
-                detected_encoding = "str"
-            elif isinstance(content, (bytes, bytearray)):
-                # 尝试多种编码解析，优先尝试 utf-8-sig 以处理 BOM
-                encodings_to_try = ["utf-8-sig", "utf-8", "gbk", "gb2312", "utf-16", "cp1252"]
-                csv_content = None
-                detected_encoding = None
-
-                for encoding in encodings_to_try:
-                    try:
-                        csv_content = content.decode(encoding)
-                        detected_encoding = encoding
-                        logger.info(f"成功使用 {encoding} 编码解码文件")
-                        break  # 成功解码后立即停止
-                    except (UnicodeDecodeError, LookupError) as e:
-                        logger.debug(f"编码 {encoding} 解码失败: {e}")
-                        continue
-
-                if csv_content is None:
-                    response = jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式（支持 UTF-8、GBK 等常见编码）"})
-                    response.headers['Access-Control-Allow-Origin'] = '*'
-                    response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-                    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-                    return response
-            else:
-                response = jsonify({"success": False, "message": "无法读取CSV文件内容"})
-                response.headers['Access-Control-Allow-Origin'] = '*'
-                response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-                return response
-
-            # 清理 BOM 标记（如果存在）
-            if csv_content.startswith('\ufeff'):
-                csv_content = csv_content[1:]
-                logger.info("已移除 BOM 标记")
-
-            # 解析 CSV
-            csv_buffer = StringIO(csv_content)
+            csv_buffer = StringIO(cfg_csv)
             reader = csv.DictReader(csv_buffer)
             rows = list(reader)
-
             if not rows:
-                response = jsonify({"success": False, "message": "CSV 文件为空或没有有效数据行"})
+                response = jsonify({"success": False, "message": "CSV 文本为空或无法解析"})
                 response.headers['Access-Control-Allow-Origin'] = '*'
                 response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
                 response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
                 return response
 
-            # 记录字段名以便调试
-            fieldnames = reader.fieldnames
-            logger.info(f"CSV 字段名: {fieldnames}")
-
-            # 解析任务数据
-            parsed_tasks = []
-            errors = []
-
+            imported: list[dict[str, object]] = []
+            errors: list[str] = []
             for index, row in enumerate(rows, start=1):
-                try:
-                    # 支持多种字段名称映射
-                    category = str(row.get("category", "") or 
-                                  row.get("类别", "") or 
-                                  row.get("种类", "") or 
-                                  row.get("tag", "") or 
-                                  row.get("task_category", "") or "").strip()
-                    
-                    title = str(row.get("title", "") or 
-                               row.get("任务", "") or 
-                               row.get("task_title", "") or "").strip()
-                    
-                    points_raw = str(row.get("points", "") or 
-                                    row.get("task_points", "") or 
-                                    row.get("积分值", "") or "").strip()
-                    
-                    enabled_raw = row.get("enabled", row.get("启用", "1"))
+                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or "").strip()
+                title = str(
+                    row.get("title", "")
+                    or row.get("名字", "")
+                    or row.get("任务内容", "")
+                    or row.get("任务", "")
+                    or row.get("task_title", "")
+                    or ""
+                ).strip()
+                points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
+                enabled_raw = row.get("enabled", row.get("启用", "1"))
 
-                    if not category or not title:
-                        errors.append(f"第 {index} 行：缺少类别或任务名称")
-                        continue
-
-                    try:
-                        points = int(points_raw or 0)
-                        if points < 0:
-                            errors.append(f"第 {index} 行：积分值不能为负数（{points_raw}），使用默认值 0")
-                            points = 0
-                    except (TypeError, ValueError):
-                        errors.append(f"第 {index} 行：积分值不是有效的数字（{points_raw}），使用默认值 0")
-                        points = 0
-
-                    parsed_tasks.append({
-                        "category": category,
-                        "title": title,
-                        "points": points,
-                        "enabled": _parse_bool(enabled_raw),
-                    })
-                except Exception as row_error:
-                    errors.append(f"第 {index} 行处理失败：{str(row_error)}")
-                    logger.error(f"CSV row {index} parsing error: {row_error}, row: {row}")
+                if not category or not title:
+                    errors.append(f"第 {index} 行缺少 category 或 title。")
                     continue
 
-            if not parsed_tasks:
-                error_msg = "未解析到有效任务数据。" + (f"\n错误：{'; '.join(errors[:3])}" if errors else "")
-                response = jsonify({"success": False, "message": error_msg})
+                try:
+                    points = int(points_raw or 0)
+                except (TypeError, ValueError):
+                    points = 0
+
+                imported.append({
+                    "category": category,
+                    "title": title,
+                    "points": points,
+                    "enabled": _parse_bool(enabled_raw),
+                })
+
+            if not imported:
+                response = jsonify({"success": False, "message": "未解析到有效任务，请检查 CSV 字段是否包含 category 和 title。", "errors": errors})
                 response.headers['Access-Control-Allow-Origin'] = '*'
                 response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
                 response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
                 return response
 
-            logger.info(
-                f"CSV upload parsed {len(parsed_tasks)} tasks from file {file.filename} with encoding {detected_encoding}"
-            )
-            response = jsonify({
-                "success": True,
-                "data": {
-                    "tasks": parsed_tasks,
-                    "total_rows": len(rows),
-                    "parsed_count": len(parsed_tasks),
-                    "errors": errors,
-                    "encoding": detected_encoding,
-                },
-                "message": f"成功解析 {len(parsed_tasks)} 条任务数据 (编码: {detected_encoding})",
-            })
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            return response
-
-        except Exception as e:
-            logger.error(f"CSV upload error: {e}", exc_info=True)
-            response = jsonify({"success": False, "message": f"上传处理失败: {str(e)}"})
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            return response
-
-    async def api_csv_import(self):
-        """确认导入解析后的 CSV 数据"""
-        if request.method == "OPTIONS":
-            response = Response("", status=200)
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            return response
-
-        try:
-            payload = await self._get_request_json()
-            data = payload.get("data", {})
-
-            if not data or "tasks" not in data:
-                return jsonify({"success": False, "message": "无效的导入数据"})
-
-            tasks = data["tasks"]
-            if not isinstance(tasks, list) or not tasks:
-                return jsonify({"success": False, "message": "任务数据为空"})
-
-            # 验证任务数据格式
-            validated_tasks = []
-            for task in tasks:
-                if not isinstance(task, dict):
-                    continue
-                category = str(task.get("category", "")).strip()
-                title = str(task.get("title", "")).strip()
-                points = int(task.get("points", 0))
-                enabled = bool(task.get("enabled", True))
-
-                if category and title:
-                    validated_tasks.append({
-                        "category": category,
-                        "title": title,
-                        "points": points,
-                        "enabled": enabled,
-                    })
-
-            if not validated_tasks:
-                return jsonify({"success": False, "message": "没有有效的任务数据"})
-
-            # 保存到状态
             state = await self._get_state()
-            state["tasks"] = validated_tasks
+            state["tasks"] = imported
             await self._save_state()
 
-            categories = _task_categories(validated_tasks)
-            response = jsonify({
-                "success": True,
-                "message": f"成功导入 {len(validated_tasks)} 条任务。当前可用分类：{', '.join(categories)}。",
-                "imported_count": len(validated_tasks),
-                "categories": categories,
-            })
+            response = jsonify({"success": True, "message": f"成功从插件配置导入 {len(imported)} 条任务。", "imported_count": len(imported), "errors": errors})
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
             return response
 
         except Exception as e:
-            logger.error(f"CSV import error: {e}")
+            logger.exception("config import tasks error: %s", e)
             response = jsonify({"success": False, "message": f"导入失败: {str(e)}"})
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
             return response
+
+    # CSV upload/import endpoints removed — use plugin configuration (`tasks_csv_text` / `groups_json`) instead.
 
     async def api_tasks_stats(self):
         """获取任务导入统计信息"""

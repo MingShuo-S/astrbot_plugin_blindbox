@@ -6,8 +6,6 @@ const statusBadge = document.getElementById("statusBadge");
 const refreshBtn = document.getElementById("refreshBtn");
 const createForm = document.getElementById("createForm");
 const exportAllBtn = document.getElementById("exportAllBtn");
-const importFileInput = document.getElementById("importFileInput");
-const taskImportFileInput = document.getElementById("taskImportFileInput");
 
 let pageContext = null;
 let state = null;
@@ -265,60 +263,7 @@ if (exportAllBtn) {
   });
 }
 
-// 全部导入（CSV 文本），前端读取文件并以文本形式 POST 到后端处理
-if (importFileInput) {
-  importFileInput.addEventListener("change", async (ev) => {
-    const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    if (!confirm(`确认导入文件：${file.name} ? 这将覆盖对应小组的提交记录。`)) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const text = String(reader.result || "");
-        setStatus("导入中", "warn");
-        await callApi("group/import-submissions-all-csv", { csv: text });
-        await loadState();
-        showMessage("导入完成", "ok");
-      } catch (err) {
-        showMessage(err.message || String(err), "err");
-      } finally {
-        setStatus("在线", "ok");
-      }
-    };
-    if (file.name.endsWith(".xlsx")) {
-      showMessage("不支持直接解析 .xlsx，请另存为 CSV 并重试。", "err");
-      return;
-    }
-    reader.readAsText(file, "utf-8");
-  });
-}
-
-if (taskImportFileInput) {
-  taskImportFileInput.addEventListener("change", async (ev) => {
-    const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    if (!confirm(`确认导入盲盒任务文件：${file.name} ? 这将覆盖当前任务列表。`)) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const text = String(reader.result || "");
-        setStatus("导入中", "warn");
-        await callApi("tasks/import-csv", { csv: text });
-        await loadState();
-        showMessage("任务导入完成", "ok");
-      } catch (err) {
-        showMessage(err.message || String(err), "err");
-      } finally {
-        setStatus("在线", "ok");
-      }
-    };
-    if (file.name.endsWith(".xlsx")) {
-      showMessage("任务导入只支持 CSV，请另存为 CSV 并重试。", "err");
-      return;
-    }
-    reader.readAsText(file, "utf-8");
-  });
-}
+// 导入功能已移至插件配置：请在插件配置中使用 `groups_json` / `tasks` 或 `tasks_csv_text` 来管理导入。
 
 function normalizeApiResponse(payload) {
   if (payload && typeof payload === "object" && "success" in payload) {
