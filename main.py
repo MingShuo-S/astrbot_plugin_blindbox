@@ -625,9 +625,9 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录（覆盖）")
         context.register_web_api(f"/{PLUGIN_NAME}/api/pending-reviews", self.api_pending_reviews, ["GET"], "获取待确认审核列表")
         context.register_web_api(f"/{PLUGIN_NAME}/api/confirm-review", self.api_confirm_review_endpoint, ["POST"], "管理员确认审核结果")
-        context.register_web_api(f"/{PLUGIN_NAME}/csv/upload", self.api_csv_upload, ["POST"], "上传CSV文件进行预览")
-        context.register_web_api(f"/{PLUGIN_NAME}/csv/import", self.api_csv_import, ["POST"], "确认导入CSV数据")
-        context.register_web_api(f"/{PLUGIN_NAME}/tasks/stats", self.api_tasks_stats, ["GET"], "获取任务导入统计信息")
+        context.register_web_api(f"/{PLUGIN_NAME}/csv/upload", self.api_csv_upload, ["POST", "OPTIONS"], "上传CSV文件进行预览")
+        context.register_web_api(f"/{PLUGIN_NAME}/csv/import", self.api_csv_import, ["POST", "OPTIONS"], "确认导入CSV数据")
+        context.register_web_api(f"/{PLUGIN_NAME}/tasks/stats", self.api_tasks_stats, ["GET", "OPTIONS"], "获取任务导入统计信息")
 
     async def initialize(self):
         logger.info("astrbot_plugin_blindbox initialized")
@@ -2037,6 +2037,13 @@ class BlindBoxPlugin(Star):
 
     async def api_csv_upload(self):
         """上传 CSV 文件并解析预览数据"""
+        if request.method == "OPTIONS":
+            response = Response("", status=200)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
+
         try:
             # 获取上传的文件
             files = request.files
@@ -2144,6 +2151,13 @@ class BlindBoxPlugin(Star):
 
     async def api_csv_import(self):
         """确认导入解析后的 CSV 数据"""
+        if request.method == "OPTIONS":
+            response = Response("", status=200)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
+
         try:
             payload = await self._get_request_json()
             data = payload.get("data", {})
@@ -2203,6 +2217,13 @@ class BlindBoxPlugin(Star):
 
     async def api_tasks_stats(self):
         """获取任务导入统计信息"""
+        if request.method == "OPTIONS":
+            response = Response("", status=200)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
+
         try:
             state = await self._get_state()
             tasks = state.get("tasks", [])
