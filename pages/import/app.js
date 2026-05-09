@@ -48,10 +48,12 @@ function renderPreview(data) {
 
   const tasks = data.tasks;
   const categories = [...new Set(tasks.map(task => task.category))];
+  const encoding = data.encoding || '未知';
 
   let html = `
     <div class="preview-summary">
       <p>共解析到 <strong>${tasks.length}</strong> 条任务，包含 <strong>${categories.length}</strong> 个分类</p>
+      <p>文件编码: <strong>${encoding}</strong></p>
       <div class="categories">
         ${categories.map(cat => `<span class="category-tag">${escapeText(cat)}</span>`).join("")}
       </div>

@@ -2047,7 +2047,24 @@ class BlindBoxPlugin(Star):
 
             # 读取文件内容
             content = await file.read()
-            csv_content = content.decode("utf-8")
+
+            # 尝试多种编码解析
+            encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'utf-16', 'cp1252']
+            csv_content = None
+            detected_encoding = None
+
+            for encoding in encodings_to_try:
+                try:
+                    csv_content = content.decode(encoding)
+                    detected_encoding = encoding
+                    # 验证解码是否成功（检查是否有中文字符）
+                    if any('\u4e00' <= char <= '\u9fff' for char in csv_content):
+                        break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+
+            if csv_content is None:
+                return jsonify({"success": False, "message": "无法解析文件编码，请确保文件是有效的CSV格式"})
 
             # 解析 CSV
             csv_buffer = StringIO(csv_content)
@@ -2062,9 +2079,9 @@ class BlindBoxPlugin(Star):
             errors = []
 
             for index, row in enumerate(rows, start=1):
-                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("task_category", "")).strip()
+                category = str(row.get("category", "") or row.get("类别", "") or row.get("种类", "") or row.get("tag", "") or row.get("task_category", "")).strip()
                 title = str(row.get("title", "") or row.get("任务", "") or row.get("task_title", "")).strip()
-                points_raw = str(row.get("points", "") or row.get("task_points", "") or "").strip()
+                points_raw = str(row.get("points", "") or row.get("task_points", "") or row.get("积分值", "") or "").strip()
                 enabled_raw = row.get("enabled", row.get("启用", "1"))
 
                 if not category or not title:
@@ -2093,8 +2110,9 @@ class BlindBoxPlugin(Star):
                     "total_rows": len(rows),
                     "parsed_count": len(parsed_tasks),
                     "errors": errors,
+                    "encoding": detected_encoding,
                 },
-                "message": f"成功解析 {len(parsed_tasks)} 条任务数据",
+                "message": f"成功解析 {len(parsed_tasks)} 条任务数据 (编码: {detected_encoding})",
             })
 
         except Exception as e:
