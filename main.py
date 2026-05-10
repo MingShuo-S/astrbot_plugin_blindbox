@@ -1402,9 +1402,8 @@ class BlindBoxPlugin(Star):
         if not isinstance(group_data, dict):
             raise ValueError(f"序号为 {group_no} 的小组不存在。")
 
-        leader_qq = str(group_data.get("leader_qq", ""))
-        if actor_qq is not None and actor_qq != leader_qq:
-            raise ValueError("只有组长可以抽取或重抽本组任务。")
+        if actor_qq is not None and not self._group_has_member(group_data, actor_qq):
+            raise ValueError("仅本组成员可以抽取或重抽本组任务。")
 
         normalized_category = _normalize_category(category)
         tasks = await self._get_tasks()
