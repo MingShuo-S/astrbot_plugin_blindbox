@@ -145,8 +145,10 @@ function renderGroups(data) {
             ${requestBadge}
           </div>
 
-          <div class="group-members"><strong>成员：</strong>${escapeText(membersText)}</div>
-          <div class="group-draw"><strong>任务：</strong>${escapeText(groupDrawText(group.group_no, data))}</div>
+          <div class="inline-form">
+            <input data-rename-input placeholder="输入新组名" />
+            <button class="ghost" data-action="rename">改名</button>
+          </div>
 
           <div class="inline-form">
             <input data-add-input placeholder="添加成员 QQ，用逗号分隔" />
@@ -187,6 +189,7 @@ function renderGroups(data) {
       const addInput = card.querySelector("[data-add-input]");
       const removeInput = card.querySelector("[data-remove-input]");
       const transferSelect = card.querySelector("[data-transfer-select]");
+      const renameInput = card.querySelector("[data-rename-input]");
 
       try {
         if (action === "add") {
@@ -208,6 +211,13 @@ function renderGroups(data) {
         } else if (action === "transfer") {
           const newLeaderQq = String(transferSelect.value || "").trim();
           await callApi("group/transfer-leader", { group_no: groupNo, new_leader_qq: newLeaderQq });
+        } else if (action === "rename") {
+          const newGroupName = String(renameInput.value || "").trim();
+          if (!newGroupName) {
+            throw new Error("新组名不能为空");
+          }
+          await callApi("group/rename", { group_no: groupNo, new_group_name: newGroupName });
+          renameInput.value = "";
         } else if (action === "export") {
           const result = await callApi("group/export-submissions", { group_no: groupNo });
           downloadJson(`blindbox-group-${groupNo}-submissions.json`, result);
