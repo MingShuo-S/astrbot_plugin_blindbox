@@ -2714,6 +2714,37 @@ class BlindBoxPlugin(Star):
 
         yield event.plain_result(_format_help())
 
+    async def _handle_whoami(self, event: AstrMessageEvent):
+        try:
+            sender_id = self._get_sender_id(event)
+        except ValueError:
+            yield event.plain_result("无法识别发送者，请稍后重试。")
+            return
+
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if not group_no or not group_data:
+            yield event.plain_result("你当前还没有加入任何小组。")
+            return
+
+        lines = [
+            "【我的小组信息】",
+            self._build_group_summary(group_no, group_data),
+        ]
+
+        draws = (await self._get_state()).get("draws", {})
+        current_draw = draws.get(group_no, {}) if isinstance(draws, dict) else {}
+        if isinstance(current_draw, dict) and current_draw.get("week") == _week_key():
+            lines.extend(
+                [
+                    "",
+                    "【本周盲盒】",
+                    f"{current_draw.get('category', '')} - {current_draw.get('title', '')}",
+                    f"建议积分：{current_draw.get('points', 0)} 分",
+                ]
+            )
+
+        yield event.plain_result("\n".join(lines))
+
     async def api_pending_reviews(self):
         """获取待确认的审核列表"""
         try:
