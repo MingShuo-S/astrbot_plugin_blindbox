@@ -123,7 +123,7 @@ CATEGORY_ALIASES = {
 
 
 def _default_state() -> dict[str, object]:
-    return {"groups": {}, "member_to_group": {}, "draws": {}, "tasks": []}
+    return {"groups": {}, "member_to_group": {}, "draws": {}, "tasks": [], "pending_selections": {}}
 
 
 def _now() -> datetime:
@@ -373,6 +373,9 @@ def _format_help() -> str:
     return (
         "【BlindBox 小组管理】\n"
         "盲盒抽取：/blindbox 或 /blindbox <分类名称> / 全部\n"
+        "  - 抽取后会显示 3 个任务选项，回复 1/2/3 来选择\n"
+        "  - 每个小组每周只能抽一次\n"
+        "  - 当任务完成或超过一周未完成时，可以抽取下一个任务\n"
         "小组创建：/blindbox group create <序号> <组名> <第一个QQ是组长> [QQ号...]\n"
         "添加成员：/blindbox group add <序号> <QQ号...>\n"
         "移除成员：/blindbox group remove <序号> <QQ号...>\n"
@@ -577,6 +580,9 @@ class BlindBoxPlugin(Star):
         
         # 记录当前等待管理员确认的审核（submission_id -> (group_no, submission_data)）
         self._pending_reviews: dict[str, tuple[str, dict]] = {}
+        
+        # 记录用户当前的选择状态（sender_id -> {selection_id, group_no, created_at}）
+        self._user_selections: dict[str, dict[str, object]] = {}
         
         # 注册AI工具
         # 创建工具实例并注册
@@ -838,9 +844,11 @@ class BlindBoxPlugin(Star):
 
         groups = raw_state.get("groups", {})
         draws = raw_state.get("draws", {})
+        pending_selections = raw_state.get("pending_selections", {})
         normalized_groups: dict[str, object] = {}
         member_to_group: dict[str, str] = {}
         normalized_draws: dict[str, object] = {}
+        normalized_selections: dict[str, object] = {}
 
         if isinstance(groups, dict):
             for group_no, group_data in groups.items():
@@ -892,6 +900,19 @@ class BlindBoxPlugin(Star):
                 }
                 if "description" in draw_data:
                     normalized_draws[str(group_no)]["description"] = str(draw_data.get("description", ""))
+        
+        # 清理过期的待选择记录（超过5分钟）
+        if isinstance(pending_selections, dict):
+            current_time = _now()
+            for selection_id, selection_data in pending_selections.items():
+                if isinstance(selection_data, dict):
+                    created_at_str = str(selection_data.get("created_at", ""))
+                    try:
+                        created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
+                        if (current_time - created_at).total_seconds() <= 300:  # 5分钟内有效
+                            normalized_selections[selection_id] = selection_data
+                    except Exception:
+                        pass
 
         tasks = raw_state.get("tasks", []) if isinstance(raw_state, dict) else []
         normalized_tasks = _normalize_tasks(tasks) if isinstance(tasks, list) else []
@@ -899,6 +920,7 @@ class BlindBoxPlugin(Star):
             "groups": normalized_groups,
             "member_to_group": member_to_group,
             "draws": normalized_draws,
+            "pending_selections": normalized_selections,
             "tasks": normalized_tasks,
         }
 
@@ -1193,9 +1215,11 @@ class BlindBoxPlugin(Star):
             "你是南京大学行知×开甲学习小组的盲盒任务审核助手。\n\n"
             "【插件功能说明】\n"
             "- 本插件管理学习小组的'盲盒任务'机制\n"
-            "- 每个小组每周可以抽取 1-3 次任务（同一批次上限 3 次）\n"
+            "- 每个小组每周可以抽取 1 次任务，需要从 3 个选项中选择 1 个\n"
+            "- 选定的任务需要在一周内（7天）完成\n"
             "- 任务按照盲盒清单中定义的分类分组，例如德育、智育、体育、美育、劳动等\n"
-            "- 每个任务都附带建议积分\n\n"
+            "- 每个任务都附带建议积分\n"
+            "- 任务完成后或超过一周未完成，可以抽取下一个任务\n\n"
             "【你的职责】\n"
             "1. 根据小组提交的材料和当前分配的任务进行审核\n"
             "2. 判断提交内容是否满足任务要求\n"
@@ -1205,7 +1229,7 @@ class BlindBoxPlugin(Star):
             "- 根据任务标题和分类要求判断提交材料是否满足任务目的\n"
             "- 重点关注材料是否真实、完整，并符合当前抽取任务的类别方向\n\n"
             "【操作指令】\n"
-            "/blindbox - 抽取任务\n"
+            "/blindbox - 抽取任务（显示 3 个选项）\n"
             "/blindbox <分类名称> - 指定分类抽取\n"
             "/blindbox group list - 查看所有小组\n"
             "/blindbox group info <序号> - 查看小组详情\n"
@@ -1419,13 +1443,45 @@ class BlindBoxPlugin(Star):
         await self._save_state()
         return group_data
 
+    async def _pick_three_tasks(
+        self,
+        category: str,
+        tasks: list[dict[str, object]],
+        exclude_task: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        """随机选择3个不同的任务供用户选择"""
+        active_tasks = [task for task in tasks if task.get("enabled", True)]
+        if category == "全部":
+            active_tasks = [task for task in active_tasks if str(task.get("category", "")).strip()]
+        else:
+            active_tasks = [task for task in active_tasks if str(task.get("category", "")).strip() == category]
+
+        # 排除上一次抽到的任务，确保每次抽的内容不同
+        if exclude_task and isinstance(exclude_task, dict):
+            exclude_title = str(exclude_task.get("title", "")).strip()
+            exclude_category = str(exclude_task.get("category", "")).strip()
+            active_tasks = [
+                task
+                for task in active_tasks
+                if not (str(task.get("title", "")).strip() == exclude_title and str(task.get("category", "")).strip() == exclude_category)
+            ]
+
+        if not active_tasks:
+            raise ValueError("没有可用的盲盒任务，请先在插件配置里添加任务。")
+        
+        # 随机选择3个任务（或更少，如果可用任务不足3个）
+        from random import sample
+        count = min(3, len(active_tasks))
+        return sample(active_tasks, count)
+
     async def _draw_for_group(
         self,
         group_no: str,
         category: str,
         force_redraw: bool,
         actor_qq: str | None = None,
-    ) -> tuple[dict[str, object], bool, str]:
+    ) -> tuple[list[dict[str, object]], bool, str]:
+        """抽盲盒：返回3个任务选项供用户选择"""
         state = await self._get_state()
         groups = state.get("groups", {})
         draws = state.setdefault("draws", {})
@@ -1437,7 +1493,7 @@ class BlindBoxPlugin(Star):
             raise ValueError(f"序号为 {group_no} 的小组不存在。")
 
         if actor_qq is not None and not self._group_has_member(group_data, actor_qq):
-            raise ValueError("仅本组成员可以抽取或重抽本组任务。")
+            raise ValueError("仅本组成员可以抽取本组任务。")
 
         normalized_category = _normalize_category(category)
         tasks = await self._get_tasks()
@@ -1452,44 +1508,90 @@ class BlindBoxPlugin(Star):
         current_batch = _batch_id()
         current_draw = draws.get(str(group_no))
         
-        # 检查本批次是否已经抽了3次（仅在非强制重抽时检查）
+        # 检查本周是否已经有未完成的任务（如果有，则不能重新抽取，除非强制重抽）
         if not force_redraw and isinstance(current_draw, dict):
-            if current_draw.get("week") == week and current_draw.get("batch_id") == current_batch:
-                draw_count = int(current_draw.get("draw_count", 0))
-                if draw_count >= 3:
-                    raise ValueError(f"本批次（{current_batch}）已经抽取了 {draw_count} 次，达到上限 3 次。")
-                # 本周已有任务，返回当前任务
-                return current_draw, False, ""
+            if current_draw.get("batch_id") == current_batch:
+                raise ValueError("本周已经抽取过任务了，请先提交当前任务，或使用 /blindbox redraw 强制重抽。")
         
         # 排除上一次抽到的任务
         exclude_task = current_draw if isinstance(current_draw, dict) else None
-        picked = _pick_task(normalized_category, tasks, exclude_task=exclude_task)
+        picked_tasks = await self._pick_three_tasks(normalized_category, tasks, exclude_task=exclude_task)
         
-        # 计算新的抽取次数
-        if force_redraw or not isinstance(current_draw, dict) or current_draw.get("batch_id") != current_batch:
-            # 强制重抽或切换批次，重置计数
-            new_draw_count = 1
-        else:
-            # 同批次继续抽取
-            new_draw_count = int(current_draw.get("draw_count", 0)) + 1
+        # 生成临时选择ID和三个任务选项
+        selection_id = uuid4().hex
+        selection_data = {
+            "group_no": str(group_no),
+            "category": normalized_category,
+            "tasks": picked_tasks,
+            "created_at": _timestamp(),
+        }
+        
+        # 保存待选择状态
+        pending_selections = state.setdefault("pending_selections", {})
+        pending_selections[selection_id] = selection_data
+        await self._save_state()
+        
+        status_msg = "请选择任务：回复 1/2/3"
+        return picked_tasks, True, status_msg, selection_id
+
+    async def _confirm_selection(
+        self,
+        group_no: str,
+        selection_id: str,
+        choice: int,
+        actor_qq: str | None = None,
+    ) -> dict[str, object]:
+        """用户选择任务后，确认并保存任务"""
+        if choice not in {1, 2, 3}:
+            raise ValueError("请选择 1/2/3")
+        
+        state = await self._get_state()
+        pending_selections = state.get("pending_selections", {})
+        
+        if selection_id not in pending_selections:
+            raise ValueError("选择已过期，请重新抽取。")
+        
+        selection_data = pending_selections[selection_id]
+        if str(selection_data.get("group_no")) != str(group_no):
+            raise ValueError("选择ID与小组不匹配。")
+        
+        tasks = selection_data.get("tasks", [])
+        if not tasks or choice > len(tasks):
+            raise ValueError("选择无效。")
+        
+        selected_task = tasks[choice - 1]
+        
+        groups = state.get("groups", {})
+        draws = state.setdefault("draws", {})
+        
+        group_data = groups.get(str(group_no))
+        if not isinstance(group_data, dict):
+            raise ValueError(f"序号为 {group_no} 的小组不存在。")
+        
+        week = _week_key()
+        current_batch = _batch_id()
         
         draw_data = {
             "week": week,
             "batch_id": current_batch,
-            "draw_count": new_draw_count,
+            "draw_count": 1,
             "group_no": str(group_no),
             "group_name": str(group_data.get("group_name", "")),
-            "category": str(picked["category"]),
-            "title": str(picked["title"]),
-            "points": int(picked["points"]),
+            "category": str(selected_task["category"]),
+            "title": str(selected_task["title"]),
+            "points": int(selected_task["points"]),
             "drawn_at": _timestamp(),
         }
-        if "description" in picked:
-            draw_data["description"] = str(picked["description"])
+        if "description" in selected_task:
+            draw_data["description"] = str(selected_task["description"])
+        
         draws[str(group_no)] = draw_data
+        
+        # 清除选择状态
+        del pending_selections[selection_id]
+        
         await self._save_state()
-        status_msg = f"(本批次第 {new_draw_count}/3 次抽取)" if new_draw_count <= 3 else ""
-        return draw_data, True, status_msg
+        return draw_data
 
     async def _api_result(self, handler):
         try:
@@ -1941,10 +2043,18 @@ class BlindBoxPlugin(Star):
         actor_qq = str(payload.get("actor_qq", "")).strip() or None
 
         async def _handler():
-            draw_data, created_new, status_msg = await self._draw_for_group(group_no, category, force_redraw, actor_qq=actor_qq)
-            draw_data["created_new"] = created_new
-            draw_data["status_message"] = status_msg
-            return draw_data
+            try:
+                picked_tasks, created_new, status_msg, selection_id = await self._draw_for_group(
+                    group_no, category, force_redraw, actor_qq=actor_qq
+                )
+                return {
+                    "created_new": created_new,
+                    "status_message": status_msg,
+                    "selection_id": selection_id,
+                    "tasks": picked_tasks,
+                }
+            except ValueError as e:
+                raise ValueError(str(e))
 
         return await self._api_result(_handler)
     
@@ -2705,6 +2815,43 @@ class BlindBoxPlugin(Star):
             logger.error(f"管理员确认审核出错：{e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)})
 
+    def _can_draw_again(self, draw_data: dict[str, object] | None, records: list[dict[str, object]]) -> tuple[bool, str]:
+        """检查是否可以抽新任务
+        
+        返回：(是否可以, 原因消息)
+        """
+        if not draw_data or not isinstance(draw_data, dict):
+            return True, ""
+        
+        # 检查是否已提交过该任务（任何已审核的提交）
+        for record in records:
+            if isinstance(record, dict):
+                task_snapshot = record.get("task_snapshot", {})
+                if isinstance(task_snapshot, dict):
+                    record_task_title = task_snapshot.get("title", "")
+                    draw_task_title = draw_data.get("title", "")
+                    if record_task_title == draw_task_title:
+                        # 如果提交已通过或已拒绝（已审核），则可以重新抽
+                        review_status = record.get("review_status", "")
+                        if review_status in {"approved", "rejected"}:
+                            return True, "上周任务已完成，可以抽取新任务"
+                        elif review_status == "pending":
+                            return False, "上周任务仍在审核中，请等待审核结果"
+        
+        # 检查是否超过一周（7天）
+        drawn_at_str = draw_data.get("drawn_at", "")
+        if drawn_at_str:
+            try:
+                drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                time_elapsed = _now() - drawn_at
+                if time_elapsed.total_seconds() > 7 * 24 * 3600:  # 7天
+                    return True, "任务已超期，可以抽取新任务"
+            except Exception:
+                pass
+        
+        # 都不满足条件，无法抽新任务
+        return False, "本周任务未完成，无法抽取新任务。请先提交当前任务。"
+
     async def _handle_draw(self, event: AstrMessageEvent, args: list[str], force_redraw: bool = False):
         try:
             group_id = self._get_group_id(event)
@@ -2721,30 +2868,53 @@ class BlindBoxPlugin(Star):
             yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。请先使用 /blindbox group create 或 /blindbox group add。")
             return
 
+        # 检查是否可以抽取新任务
+        state = await self._get_state()
+        draws = state.get("draws", {})
+        current_draw = draws.get(group_no)
+        records = self._load_submission_records(group_no)
+        
+        can_draw, reason_msg = self._can_draw_again(current_draw, records)
+        if not can_draw and not force_redraw:
+            yield event.plain_result(reason_msg)
+            return
+
         category = args[0] if args else "全部"
-        draw_data, created_new, status_msg = await self._draw_for_group(group_no, category, force_redraw, actor_qq=sender_id)
-        rules_text = str(self.config.get("rules_text", DEFAULT_RULES_TEXT))
-        task = {
-            "category": draw_data.get("category", ""),
-            "title": draw_data.get("title", ""),
-            "points": draw_data.get("points", 0),
-        }
-        if "description" in draw_data:
-            task["description"] = draw_data.get("description")
+        
+        try:
+            picked_tasks, created_new, status_msg, selection_id = await self._draw_for_group(
+                group_no, category, force_redraw, actor_qq=sender_id
+            )
+        except ValueError as e:
+            yield event.plain_result(str(e))
+            return
 
         lines = [
-            _format_task(task, rules_text),
-            "",
-            f"当前小组：{group_no} - {group_data.get('group_name', '')}",
-            f"组长：{group_data.get('leader_qq', '')}",
-            f"本周抽取状态：{draw_data.get('week', '')}",
+            "【南京大学行知×开甲 学习小组 · 抽奖盲盒】\n",
+            "恭喜抽到以下任务，请选择其中一个：\n",
         ]
-        if status_msg:
-            lines.append(status_msg)
-        if force_redraw:
-            lines.append("本次操作：重抽并覆盖本周任务")
-        elif not created_new:
-            lines.append("本周已存在任务，返回当前任务；如需更换请使用 /blindbox redraw。")
+        
+        for i, task in enumerate(picked_tasks, 1):
+            lines.append(f"{i}. 【{task['category']}】{task['title']}")
+            lines.append(f"   建议积分：{task['points']} 分")
+            if task.get("description"):
+                lines.append(f"   说明：{task['description']}")
+        
+        lines.append("")
+        lines.append("请回复数字 1/2/3 来选择任务")
+        lines.append("")
+        lines.append(f"当前小组：{group_no} - {group_data.get('group_name', '')}")
+        lines.append(f"组长：{group_data.get('leader_qq', '')}")
+        
+        # 保存选择ID到用户的临时状态
+        if not hasattr(self, '_user_selections'):
+            self._user_selections = {}
+        self._user_selections[sender_id] = {
+            "selection_id": selection_id,
+            "group_no": group_no,
+            "created_at": _now(),
+        }
+        
         yield event.plain_result("\n".join(lines))
 
     async def _trigger_ai_review(self, event: AstrMessageEvent, group_no: str, submission_id: str):
@@ -2868,7 +3038,74 @@ class BlindBoxPlugin(Star):
 
 
 
-    async def _handle_whoami(self, event: AstrMessageEvent):
+    async def _handle_selection_response(self, event: AstrMessageEvent, choice_text: str):
+        """处理用户对任务选项的选择（1/2/3）"""
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                return
+        except ValueError:
+            return
+
+        sender_id = self._get_sender_id(event)
+        
+        # 检查用户是否有待选择的任务
+        if not hasattr(self, '_user_selections'):
+            self._user_selections = {}
+        
+        if sender_id not in self._user_selections:
+            # 没有待选择，不处理
+            return
+        
+        selection_info = self._user_selections[sender_id]
+        selection_id = selection_info.get("selection_id", "")
+        group_no = selection_info.get("group_no", "")
+        
+        # 检查选择是否过期（5分钟）
+        created_at = selection_info.get("created_at")
+        if created_at and (_now() - created_at).total_seconds() > 300:
+            del self._user_selections[sender_id]
+            yield event.plain_result("选择已过期，请重新抽取。")
+            return
+        
+        try:
+            choice = int(choice_text.strip())
+            if choice not in {1, 2, 3}:
+                yield event.plain_result("请选择 1、2 或 3")
+                return
+        except (ValueError, AttributeError):
+            return
+        
+        try:
+            draw_data = await self._confirm_selection(group_no, selection_id, choice, actor_qq=sender_id)
+        except ValueError as e:
+            yield event.plain_result(str(e))
+            if sender_id in self._user_selections:
+                del self._user_selections[sender_id]
+            return
+        
+        # 清除选择记录
+        del self._user_selections[sender_id]
+        
+        # 获取最新的小组信息
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        group_data = groups.get(group_no, {})
+        
+        # 显示确认消息
+        lines = [
+            "【任务已确定】",
+            f"分类：{draw_data.get('category', '')}",
+            f"任务：{draw_data.get('title', '')}",
+            f"建议积分：{draw_data.get('points', 0)} 分",
+            "",
+            f"当前小组：{group_no} - {group_data.get('group_name', '')}",
+            f"本周截止日期：{draw_data.get('drawn_at', '')} 起，一周内需完成",
+            "",
+            "使用 /blindbox submit <任务说明> 来提交任务成果。",
+        ]
+        
+        yield event.plain_result("\n".join(lines))
         sender_id = self._get_sender_id(event)
         group_no, group_data = await self._find_group_by_member(sender_id)
         if not group_no or not group_data:
@@ -2999,6 +3236,18 @@ class BlindBoxPlugin(Star):
             return
 
         yield event.plain_result(_format_help())
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=5)
+    async def handle_selection_choice(self, event: AstrMessageEvent):
+        """处理用户的选择回复（1/2/3）"""
+        try:
+            text = event.message_str.strip()
+            # 检查是否是纯数字 1/2/3
+            if text in {"1", "2", "3"}:
+                async for result in self._handle_selection_response(event, text):
+                    yield result
+        except Exception:
+            pass
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-1)
     async def track_group_member(self, event: AstrMessageEvent):
