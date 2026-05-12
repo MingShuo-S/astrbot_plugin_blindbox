@@ -2,7 +2,7 @@
   "rules_text": {
     "description": "盲盒活动说明",
     "type": "text",
-    "default": "据行为心理学的‘可变比率强化’学说，不确定的任务和奖励能持续激发参与者的期待感。\n本期学习小组引入‘盲盒任务’机制：每小组每周可抽取一次盲盒任务，为一周的小组学习设置目标激励。\n\n小组完成盲盒任务后可以获得对应积分，这些积分可用于兑换精美奖品、评选优秀小组。"
+    "default": "据行为心理学的可变比率强化学说，不确定的任务和奖励能持续激发参与者的期待感。\n本期学习小组引入盲盒任务机制：每小组每周可抽取一次盲盒任务，为一周的小组学习设置目标激励。\n\n小组完成盲盒任务后可以获得对应积分，这些积分可用于兑换精美奖品、评选优秀小组。"
   },
   "tasks": {
     "description": "盲盒任务列表",
@@ -32,15 +32,39 @@
             "description": "启用",
             "type": "bool",
             "default": true
+          },
+          "description": {
+            "description": "任务说明（可选）：任务的具体解释、要求或示例，抽取时会显示",
+            "type": "text",
+            "default": ""
           }
         }
       }
     }
-  }
-  ,
+  },
   "groups_json": {
-    "description": "小组数据（JSON），可以在此粘贴或编辑已有小组配置以便通过插件配置管理小组。格式支持对象或数组，示例：\n[ { \"group_no\": \"1\", \"group_name\": \"小组一\", \"leader_qq\": \"100\", \"members\": [\"100\",\"101\"] } ] 或 { \"1\": { ... } }",
+    "description": "小组数据（JSON），可以在此粘贴或编辑已有小组配置以便通过插件配置管理小组。格式支持对象或数组。",
     "type": "text",
     "default": ""
+  },
+  "server_base_url": {
+    "description": "可选：后端插件服务的基础 URL",
+    "type": "string",
+    "default": ""
+  },
+  "tasks_csv_text": {
+    "description": "粘贴盲盒任务的 CSV 文本，支持字段映射和自动规范化。",
+    "type": "text",
+    "default": ""
+  },
+  "tasks_csv_auto_import": {
+    "description": "是否在插件初始化时自动从 tasks_csv_text 导入任务。",
+    "type": "bool",
+    "default": false
+  },
+  "group_whitelist": {
+    "description": "盲盒白名单：允许使用 /blindbox、/blindbox redraw、/blindbox submit 等功能的群号，多个群号用逗号分隔（如 123456789,987654321）。留空则不限制。",
+    "type": "string",
+    "default": ""
   }
-}  
+}
