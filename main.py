@@ -3267,5 +3267,4 @@ class BlindBoxPlugin(Star):
         return
 
     async def terminate(self):
-        logger.info("astrbot_plugin_blindbox terminated")/ /   t e s t  
- 
+        logger.info("astrbot_plugin_blindbox terminated")// test
