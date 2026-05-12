@@ -357,6 +357,7 @@ def _format_help() -> str:
         "添加成员：/blindbox group add <序号> <QQ号...>\n"
         "移除成员：/blindbox group remove <序号> <QQ号...>\n"
         "转让组长：/blindbox group transfer <序号> <新组长QQ>\n"
+        "改名小组：/blindbox group rename <序号> <新组名>\n"
         "申请解散：/blindbox group request-dissolve <序号>\n"
         "取消解散：/blindbox group request-cancel <序号>\n"
         "提交任务：/blindbox submit <任务说明>\n"
@@ -602,6 +603,12 @@ class BlindBoxPlugin(Star):
             self.api_group_transfer_leader,
             ["POST"],
             "转让组长",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/group/rename",
+            self.api_group_rename,
+            ["POST"],
+            "改名小组",
         )
         context.register_web_api(
             f"/{PLUGIN_NAME}/group/request-dissolve",
@@ -1274,6 +1281,33 @@ class BlindBoxPlugin(Star):
         await self._save_state()
         return group_data
 
+    async def _rename_group(
+        self,
+        group_no: str,
+        new_group_name: str,
+        actor_qq: str | None = None,
+    ) -> dict[str, object]:
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        if not isinstance(groups, dict):
+            raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+        group_data = groups.get(str(group_no))
+        if not isinstance(group_data, dict):
+            raise ValueError(f"序号为 {group_no} 的小组不存在。")
+
+        current_leader = str(group_data.get("leader_qq", ""))
+        if actor_qq is not None and actor_qq != current_leader:
+            raise ValueError("只有组长可以改名小组。")
+
+        new_group_name = str(new_group_name).strip()
+        if not new_group_name:
+            raise ValueError("新组名不能为空。")
+
+        group_data["group_name"] = new_group_name
+        await self._save_state()
+        return group_data
+
     async def _draw_for_group(
         self,
         group_no: str,
@@ -1763,6 +1797,17 @@ class BlindBoxPlugin(Star):
 
         async def _handler():
             return await self._transfer_leader(group_no, new_leader_qq, actor_qq=actor_qq)
+
+        return await self._api_result(_handler)
+
+    async def api_group_rename(self):
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+        new_group_name = str(payload.get("new_group_name", "")).strip()
+        actor_qq = str(payload.get("actor_qq", "")).strip() or None
+
+        async def _handler():
+            return await self._rename_group(group_no, new_group_name, actor_qq=actor_qq)
 
         return await self._api_result(_handler)
 
@@ -2546,6 +2591,29 @@ class BlindBoxPlugin(Star):
                     [
                         f"已将小组 {group_no} 的组长转让给 {group_data['leader_qq']}",
                         f"当前组名：{group_data.get('group_name', '')}",
+                    ]
+                )
+            )
+            return
+
+        if action == "rename":
+            if len(args) < 3:
+                yield event.plain_result("用法：/blindbox group rename <序号> <新组名>")
+                return
+
+            group_no = str(args[1]).strip()
+            new_group_name = " ".join(args[2:]).strip()
+            try:
+                group_data = await self._rename_group(group_no, new_group_name, actor_qq=sender_id)
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+
+            yield event.plain_result(
+                "\n".join(
+                    [
+                        f"已将小组 {group_no} 改名为 {group_data['group_name']}",
+                        f"当前组长：{group_data.get('leader_qq', '')}",
                     ]
                 )
             )
