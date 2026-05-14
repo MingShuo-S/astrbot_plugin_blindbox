@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import aiohttp
 
+from astrbot.core import file_token_service
+
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 from quart import Response, jsonify, request
@@ -391,8 +393,8 @@ def _format_help() -> str:
         "提交任务：/blindbox submit <任务说明>\n"
         "说明：仅支持使用命令 `/blindbox submit <任务说明>` 来提交材料，命令会自动识别消息中的文字与图片并创建待审核记录。\n"
         "在群里直接 @ 机器人不会触发提交。\n"
-        "导出任务：/blindbox export <提交编号前8位> - 导出指定提交为ZIP\n"
-        "导出全部：/blindbox export all - 导出本组全部提交为ZIP\n"
+        "导出任务：/blindbox export <提交编号前8位> [组号] - 导出指定提交为ZIP\n"
+        "导出全部：/blindbox export all [组号] - 导出本组全部提交为ZIP\n"
         "查看小组：/blindbox group info <序号>\n"
         "小组列表：/blindbox group list\n"
         "我的小组：/blindbox me\n"
@@ -616,10 +618,26 @@ class BlindBoxPlugin(Star):
         except Exception:
             pass
 
-    def _get_download_url(self, endpoint: str, params: dict[str, str]) -> str:
-        base = self._server_base_url or "http://<bot服务器地址>:<端口>"
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        return f"{base}/api{endpoint}?{qs}"
+    def _get_callback_base(self) -> str:
+        """获取对外可达的回调基址"""
+        if self._server_base_url:
+            return self._server_base_url
+        try:
+            from astrbot.core.config.astrbot_config import AstrBotConfig
+
+            config = AstrBotConfig()
+            base = config.get("callback_api_base", "")
+            if base:
+                return base.rstrip("/")
+        except Exception:
+            pass
+        return "http://<bot服务器地址>:<端口>"
+
+    async def _register_for_download(self, file_path: Path) -> str:
+        """通过 FileTokenService 注册文件，返回免认证下载链接"""
+        token = await file_token_service.register_file(str(file_path))
+        base = self._get_callback_base()
+        return f"{base}/api/file/{token}"
 
     def _register_web_apis(self, context: Context) -> None:
         # 这里统一暴露给 WebUI 和外部 AI 调用的接口。
@@ -3552,37 +3570,56 @@ class BlindBoxPlugin(Star):
         asyncio.create_task(self._trigger_ai_review(event, group_no, submission_id))
 
     async def _handle_export(self, event: AstrMessageEvent, args: list[str]):
-        """导出提交记录——返回可点击的下载链接"""
+        """导出提交记录——生成 ZIP 并返回免认证下载链接
+
+        用法：
+          /blindbox export <提交编号前8位> [组号]
+          /blindbox export all [组号]
+        不指定组号时自动从当前成员身份查找。
+        """
         sender_id = self._get_sender_id(event)
-        group_no, group_data = await self._find_group_by_member(sender_id)
-        if not group_no or not group_data:
-            yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
-            return
 
         if not args:
             yield event.plain_result(
                 "用法：\n"
-                "/blindbox export <提交编号前8位> - 导出指定提交\n"
-                "/blindbox export all - 导出本组全部提交"
+                "/blindbox export <提交编号前8位> [组号] - 导出指定提交\n"
+                "/blindbox export all [组号] - 导出全部提交"
             )
             return
 
         arg = args[0].strip().lower()
+
+        # 支持从参数中指定组号（优先于成员查找）
+        specified_group_no = ""
+        if len(args) >= 2:
+            specified_group_no = args[1].strip()
+
+        if specified_group_no:
+            group_no = specified_group_no
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no) if isinstance(groups, dict) else None
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"小组 {group_no} 不存在。")
+                return
+        else:
+            group_no, group_data = await self._find_group_by_member(sender_id)
+            if not group_no or not group_data:
+                yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
+                return
+
         try:
             if arg == "all":
-                # 先验证小组有提交记录
                 records = self._load_submission_records(group_no)
                 if not records:
                     yield event.plain_result(f"小组 {group_no} 还没有提交记录。")
                     return
-                url = self._get_download_url(
-                    "/astrbot_plugin_blindbox/group/export-group-zip",
-                    {"group_no": group_no},
-                )
+                zip_path = self._export_group_zip(group_no)
+                url = await self._register_for_download(zip_path)
                 yield event.plain_result(
                     f"导出小组 {group_no} 全部提交：\n"
                     f"共 {len(records)} 条记录\n\n"
-                    f"下载链接（浏览器打开）：\n{url}"
+                    f"下载链接（5分钟内有效，仅可下载一次）：\n{url}"
                 )
             else:
                 submission_id = arg
@@ -3595,13 +3632,11 @@ class BlindBoxPlugin(Star):
                     yield event.plain_result(f"找到 {len(matched)} 条匹配记录，请使用更精确的编号。")
                     return
                 full_id = str(matched[0]["submission_id"])
-                url = self._get_download_url(
-                    "/astrbot_plugin_blindbox/group/export-submission-zip",
-                    {"group_no": group_no, "submission_id": full_id},
-                )
+                zip_path = self._export_submission_zip(group_no, full_id)
+                url = await self._register_for_download(zip_path)
                 yield event.plain_result(
                     f"导出提交 {full_id[:8]}...\n"
-                    f"下载链接（浏览器打开）：\n{url}"
+                    f"下载链接（5分钟内有效，仅可下载一次）：\n{url}"
                 )
         except ValueError as e:
             yield event.plain_result(str(e))
