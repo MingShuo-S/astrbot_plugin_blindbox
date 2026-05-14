@@ -590,7 +590,10 @@ class BlindBoxPlugin(Star):
         
         # 记录用户当前的选择状态（sender_id -> {selection_id, group_no, created_at}）
         self._user_selections: dict[str, dict[str, object]] = {}
-        
+
+        # 从配置中读取自定义服务器地址（可选项）
+        self._server_base_url = str(self.config.get("server_base_url", "")).strip().rstrip("/") if self.config else ""
+
         # 注册AI工具
         # 创建工具实例并注册
         self.context.add_llm_tools(
@@ -600,6 +603,23 @@ class BlindBoxPlugin(Star):
         )
         
         self._register_web_apis(context)
+
+    def _capture_server_url(self) -> None:
+        """从 Web 请求中自动检测服务器基址 URL（仅首次设置，之后可被覆盖）"""
+        if self._server_base_url:
+            return
+        try:
+            host = request.headers.get("X-Forwarded-Host", "") or request.host
+            scheme = request.headers.get("X-Forwarded-Proto", "") or request.scheme
+            if host:
+                self._server_base_url = f"{scheme}://{host}"
+        except Exception:
+            pass
+
+    def _get_download_url(self, endpoint: str, params: dict[str, str]) -> str:
+        base = self._server_base_url or "http://<bot服务器地址>:<端口>"
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        return f"{base}/api{endpoint}?{qs}"
 
     def _register_web_apis(self, context: Context) -> None:
         # 这里统一暴露给 WebUI 和外部 AI 调用的接口。
@@ -631,13 +651,13 @@ class BlindBoxPlugin(Star):
         context.register_web_api(
             f"/{PLUGIN_NAME}/group/export-submission-zip",
             self.api_group_export_submission_zip,
-            ["POST"],
+            ["GET", "POST"],
             "导出指定提交为ZIP（含txt和jpg）",
         )
         context.register_web_api(
             f"/{PLUGIN_NAME}/group/export-group-zip",
             self.api_group_export_group_zip,
-            ["POST"],
+            ["GET", "POST"],
             "导出小组全部提交为ZIP",
         )
         context.register_web_api(f"/{PLUGIN_NAME}/group/create", self.api_group_create, ["POST"], "创建小组")
@@ -684,6 +704,7 @@ class BlindBoxPlugin(Star):
 
     async def api_test(self):
         """测试 API 连接"""
+        self._capture_server_url()
         if request.method == "OPTIONS":
             response = Response("", status=200)
             response.headers['Access-Control-Allow-Origin'] = '*'
@@ -1833,6 +1854,7 @@ class BlindBoxPlugin(Star):
             return self._json_error(f"内部错误：{exc}")
 
     async def api_state(self):
+        self._capture_server_url()
         async def _handler():
             state = await self._get_state()
             tasks = await self._get_tasks()
@@ -2080,14 +2102,21 @@ class BlindBoxPlugin(Star):
             return self._json_error(f"内部错误：{exc}")
 
     async def api_group_export_submission_zip(self):
-        """Web API: 导出指定提交为 ZIP 文件"""
-        payload = await self._get_request_json()
-        group_no = str(payload.get("group_no", "")).strip()
-        submission_id = str(payload.get("submission_id", "")).strip()
+        """Web API: 导出指定提交为 ZIP 文件（GET 传参 / POST JSON）"""
+        group_no, submission_id = "", ""
+        if request.method == "GET":
+            group_no = str(request.args.get("group_no", "")).strip()
+            submission_id = str(request.args.get("submission_id", "")).strip()
+        else:
+            payload = await self._get_request_json()
+            group_no = str(payload.get("group_no", "")).strip()
+            submission_id = str(payload.get("submission_id", "")).strip()
+
+        self._capture_server_url()
 
         async def _handler():
             if not group_no:
-                raise ValueError("group_no 不能为空。")
+                raise ValueError("group_no 不能为空。请通过 ?group_no=X&submission_id=Y 传参")
             if not submission_id:
                 raise ValueError("submission_id 不能为空。")
             records = self._load_submission_records(group_no)
@@ -2113,13 +2142,19 @@ class BlindBoxPlugin(Star):
             return self._json_error(str(exc))
 
     async def api_group_export_group_zip(self):
-        """Web API: 导出小组全部提交为 ZIP 文件"""
-        payload = await self._get_request_json()
-        group_no = str(payload.get("group_no", "")).strip()
+        """Web API: 导出小组全部提交为 ZIP 文件（GET 传参 / POST JSON）"""
+        group_no = ""
+        if request.method == "GET":
+            group_no = str(request.args.get("group_no", "")).strip()
+        else:
+            payload = await self._get_request_json()
+            group_no = str(payload.get("group_no", "")).strip()
+
+        self._capture_server_url()
 
         async def _handler():
             if not group_no:
-                raise ValueError("group_no 不能为空。")
+                raise ValueError("group_no 不能为空。请通过 ?group_no=X 传参")
             zip_path = self._export_group_zip(group_no)
             filename = f"blindbox_group_{group_no}_all.zip"
             return Response(
@@ -3495,7 +3530,7 @@ class BlindBoxPlugin(Star):
         asyncio.create_task(self._trigger_ai_review(event, group_no, submission_id))
 
     async def _handle_export(self, event: AstrMessageEvent, args: list[str]):
-        """导出提交记录的文件（ZIP格式，含txt和jpg）"""
+        """导出提交记录——返回可点击的下载链接"""
         sender_id = self._get_sender_id(event)
         group_no, group_data = await self._find_group_by_member(sender_id)
         if not group_no or not group_data:
@@ -3513,7 +3548,20 @@ class BlindBoxPlugin(Star):
         arg = args[0].strip().lower()
         try:
             if arg == "all":
-                zip_path = self._export_group_zip(group_no)
+                # 先验证小组有提交记录
+                records = self._load_submission_records(group_no)
+                if not records:
+                    yield event.plain_result(f"小组 {group_no} 还没有提交记录。")
+                    return
+                url = self._get_download_url(
+                    "/astrbot_plugin_blindbox/group/export-group-zip",
+                    {"group_no": group_no},
+                )
+                yield event.plain_result(
+                    f"导出小组 {group_no} 全部提交：\n"
+                    f"共 {len(records)} 条记录\n\n"
+                    f"下载链接（浏览器打开）：\n{url}"
+                )
             else:
                 submission_id = arg
                 records = self._load_submission_records(group_no)
@@ -3525,13 +3573,14 @@ class BlindBoxPlugin(Star):
                     yield event.plain_result(f"找到 {len(matched)} 条匹配记录，请使用更精确的编号。")
                     return
                 full_id = str(matched[0]["submission_id"])
-                zip_path = self._export_submission_zip(group_no, full_id)
-
-            yield event.plain_result(
-                f"导出完成！\n"
-                f"文件路径：{zip_path}\n"
-                f"文件大小：{zip_path.stat().st_size / 1024:.1f} KB"
-            )
+                url = self._get_download_url(
+                    "/astrbot_plugin_blindbox/group/export-submission-zip",
+                    {"group_no": group_no, "submission_id": full_id},
+                )
+                yield event.plain_result(
+                    f"导出提交 {full_id[:8]}...\n"
+                    f"下载链接（浏览器打开）：\n{url}"
+                )
         except ValueError as e:
             yield event.plain_result(str(e))
         except Exception as e:
