@@ -3278,8 +3278,7 @@ class BlindBoxPlugin(Star):
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-            
-            # 构造AI审核提示词
+
             prompt = (
                 f"有一条新的盲盒任务提交需要审核。\n\n"
                 f"小组序号：{group_no}\n"
@@ -3287,7 +3286,7 @@ class BlindBoxPlugin(Star):
                 f"请使用 blindbox_get_submissions 工具查看待审核提交的详细内容，"
                 f"然后根据审核指南进行审核，最后调用 blindbox_review_submission 工具提交审核结果。"
             )
-            
+
             llm_resp = await self.context.tool_loop_agent(
                 event=event,
                 chat_provider_id=prov_id,
@@ -3300,20 +3299,43 @@ class BlindBoxPlugin(Star):
                 ]),
                 max_steps=10,
             )
-            
-            # 向群里报告AI审核结果
+
+            completion = llm_resp.completion_text or ""
+
+            # 检测 LLM 返回的底层错误，避免将错误信息当作审核意见发布
+            _error_markers = [
+                "All chat models failed",
+                "BadRequestError",
+                "invalid_request_error",
+                "thinking in the thinking mode must be passed back",
+                "content[].thinking",
+                "ProviderNotFoundError",
+                "AuthenticationError",
+                "RateLimitError",
+            ]
+            if any(marker in completion for marker in _error_markers):
+                await event.send(MessageChain([Plain(
+                    f"[AI 审核失败] 提交编号 {submission_id} 自动审核未能完成。\n"
+                    f"原因：AI 模型服务异常，请管理员手动审核。\n\n"
+                    f"审核通过：/blindbox pass {submission_id}\n"
+                    f"审核拒绝：/blindbox deny {submission_id}"
+                )]))
+                return
+
             result_msg = (
                 f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n"
-                f"{llm_resp.completion_text}\n\n"
+                f"{completion}\n\n"
                 f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
             )
-            # 使用 MessageChain 包装消息段并 await 发送（用于后台任务）
             await event.send(MessageChain([Plain(result_msg)]))
-            
+
         except Exception as e:
-            logger.error(f"AI审核出错：{e}", exc_info=True)
-            # 使用 MessageChain 包装错误消息段并 await 发送（用于后台任务）
-            await event.send(MessageChain([Plain(f"[AI 审核出错] 提交编号 {submission_id} 审核失败：{e}")]))
+            logger.error("AI审核出错：%s", e, exc_info=True)
+            await event.send(MessageChain([Plain(
+                f"[AI 审核异常] 提交编号 {submission_id} 自动审核遇到错误。\n"
+                f"错误：{e}\n\n"
+                f"请管理员手动审核：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+            )]))
 
     async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
         """管理员确认审核结果"""
