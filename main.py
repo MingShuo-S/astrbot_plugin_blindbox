@@ -3,12 +3,16 @@ import csv
 import inspect
 import json
 import shlex
+import shutil
+import zipfile
 from datetime import datetime
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from random import choice
 from typing import Any
 from uuid import uuid4
+
+import aiohttp
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -45,6 +49,7 @@ def _resolve_data_root() -> Path:
 
 DATA_ROOT_DIR = _resolve_data_root()
 SUBMISSION_DIR = DATA_ROOT_DIR / "submissions"
+EXPORT_DIR = DATA_ROOT_DIR / "exports"
 LEGACY_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 LEGACY_SUBMISSION_DIR = LEGACY_RUNTIME_DIR / "submissions"
 
@@ -386,6 +391,8 @@ def _format_help() -> str:
         "提交任务：/blindbox submit <任务说明>\n"
         "说明：仅支持使用命令 `/blindbox submit <任务说明>` 来提交材料，命令会自动识别消息中的文字与图片并创建待审核记录。\n"
         "在群里直接 @ 机器人不会触发提交。\n"
+        "导出任务：/blindbox export <提交编号前8位> - 导出指定提交为ZIP\n"
+        "导出全部：/blindbox export all - 导出本组全部提交为ZIP\n"
         "查看小组：/blindbox group info <序号>\n"
         "小组列表：/blindbox group list\n"
         "我的小组：/blindbox me\n"
@@ -620,6 +627,18 @@ class BlindBoxPlugin(Star):
             self.api_group_export_all_submissions_csv,
             ["GET", "POST"],
             "导出全部小组提交记录为CSV",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/group/export-submission-zip",
+            self.api_group_export_submission_zip,
+            ["POST"],
+            "导出指定提交为ZIP（含txt和jpg）",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/group/export-group-zip",
+            self.api_group_export_group_zip,
+            ["POST"],
+            "导出小组全部提交为ZIP",
         )
         context.register_web_api(f"/{PLUGIN_NAME}/group/create", self.api_group_create, ["POST"], "创建小组")
         context.register_web_api(f"/{PLUGIN_NAME}/group/add", self.api_group_add, ["POST"], "添加成员")
@@ -991,12 +1010,191 @@ class BlindBoxPlugin(Star):
             f"组员：{member_text}"
         )
 
+    # ======================== 存储路径 ========================
+
+    def _group_dir(self, group_no: str) -> Path:
+        return SUBMISSION_DIR / f"group_{group_no}"
+
+    def _submission_folder(self, group_no: str, submission_id: str) -> Path:
+        return self._group_dir(group_no) / submission_id
+
+    def _submission_index_path(self, group_no: str) -> Path:
+        return self._group_dir(group_no) / "submissions.json"
+
     def _submission_file_path(self, group_no: str) -> Path:
-        # 每个小组单独一个提交文件，方便导出和人工核查。
+        # 保留旧路径以供向后兼容读取
         return SUBMISSION_DIR / f"group_{group_no}.json"
 
     def _legacy_submission_file_path(self, group_no: str) -> Path:
         return LEGACY_SUBMISSION_DIR / f"group_{group_no}.json"
+
+    # ======================== 图片下载与文件存储 ========================
+
+    @staticmethod
+    def _convert_image_to_jpeg(source_path: Path, dest_path: Path) -> bool:
+        try:
+            from PIL import Image as PILImage
+
+            img = PILImage.open(source_path)
+            rgb_img = img.convert("RGB") if img.mode in ("RGBA", "P", "LA") else img
+            rgb_img.save(dest_path, "JPEG", quality=90)
+            return True
+        except Exception:
+            return False
+
+    async def _download_image(self, url: str, dest_path: Path) -> bool:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        dest_path.write_bytes(data)
+                        return True
+        except Exception as e:
+            logger.warning("下载图片失败: %s → %s", url, e)
+        return False
+
+    async def _save_submission_files(
+        self,
+        group_no: str,
+        submission_id: str,
+        materials_text: str,
+        images: list[dict[str, str]],
+    ) -> list[str]:
+        folder = self._submission_folder(group_no, submission_id)
+        folder.mkdir(parents=True, exist_ok=True)
+
+        (folder / "text.txt").write_text(materials_text, encoding="utf-8")
+
+        local_images: list[str] = []
+        for idx, image_entry in enumerate(images):
+            ext = ".jpg"
+            saved_path = folder / f"image_{idx + 1:03d}{ext}"
+            saved = False
+
+            # 优先尝试从 url 下载
+            url = image_entry.get("url", "")
+            if url and url.startswith("http"):
+                saved = await self._download_image(url, saved_path)
+            # 其次从 path 复制
+            if not saved:
+                src_path = image_entry.get("path", "")
+                if src_path and Path(src_path).exists():
+                    try:
+                        shutil.copy2(src_path, saved_path)
+                        saved = True
+                    except OSError as e:
+                        logger.warning("复制图片失败: %s → %s", src_path, e)
+            # 最后尝试 file 字段（可能是本地缓存文件 ID）
+            if not saved:
+                file_id = image_entry.get("file", "")
+                if file_id:
+                    # file 可能是本地路径也可能只是 ID，尝试作为路径处理
+                    file_path = Path(file_id)
+                    if file_path.exists():
+                        try:
+                            shutil.copy2(file_path, saved_path)
+                            saved = True
+                        except OSError:
+                            pass
+
+            if not saved:
+                logger.warning("无法保存图片: submission=%s idx=%d entry=%s", submission_id, idx, image_entry)
+                continue
+
+            # 如果是非 JPEG 格式，尝试转换为 .jpg
+            if saved_path.suffix.lower() != ".jpg":
+                jpg_path = saved_path.with_suffix(".jpg")
+                if self._convert_image_to_jpeg(saved_path, jpg_path):
+                    try:
+                        saved_path.unlink()
+                    except OSError:
+                        pass
+                    saved_path = jpg_path
+                    ext = ".jpg"
+                else:
+                    ext = saved_path.suffix
+
+            local_images.append(saved_path.name)
+
+        return local_images
+
+    # ======================== 导出功能 ========================
+
+    def _export_submission_zip(self, group_no: str, submission_id: str) -> Path:
+        folder = self._submission_folder(group_no, submission_id)
+        if not folder.exists():
+            raise ValueError(f"提交记录 {submission_id} 的文件不存在。")
+
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        zip_path = EXPORT_DIR / f"group_{group_no}_{submission_id[:8]}.zip"
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted(folder.iterdir()):
+                # 确保所有图片都统一为 .jpg 扩展名
+                if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"):
+                    dest_name = f.stem + ".jpg"
+                    # 尝试转换为 JPEG
+                    jpg_bytes: bytes | None = None
+                    try:
+                        from PIL import Image as PILImage
+
+                        img = PILImage.open(f)
+                        rgb_img = img.convert("RGB") if img.mode in ("RGBA", "P", "LA") else img
+                        buf = BytesIO()
+                        rgb_img.save(buf, "JPEG", quality=90)
+                        jpg_bytes = buf.getvalue()
+                    except Exception:
+                        pass
+
+                    if jpg_bytes:
+                        zf.writestr(dest_name, jpg_bytes)
+                    else:
+                        zf.write(f, dest_name)
+                else:
+                    zf.write(f, f.name)
+
+        return zip_path
+
+    def _export_group_zip(self, group_no: str) -> Path:
+        group_dir = self._group_dir(group_no)
+        if not group_dir.exists() or not any(group_dir.iterdir()):
+            raise ValueError(f"小组 {group_no} 没有提交记录。")
+
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        zip_path = EXPORT_DIR / f"group_{group_no}_all_submissions.zip"
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for sub_folder in sorted(group_dir.iterdir()):
+                if sub_folder.name == "submissions.json":
+                    zf.write(sub_folder, sub_folder.name)
+                    continue
+                if not sub_folder.is_dir():
+                    continue
+                # sub_folder 以 submission_id 命名
+                for f in sorted(sub_folder.iterdir()):
+                    arcname = f"{sub_folder.name}/{f.name}"
+                    if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"):
+                        dest_name = f"{sub_folder.name}/{f.stem}.jpg"
+                        jpg_bytes: bytes | None = None
+                        try:
+                            from PIL import Image as PILImage
+
+                            img = PILImage.open(f)
+                            rgb_img = img.convert("RGB") if img.mode in ("RGBA", "P", "LA") else img
+                            buf = BytesIO()
+                            rgb_img.save(buf, "JPEG", quality=90)
+                            jpg_bytes = buf.getvalue()
+                        except Exception:
+                            pass
+                        if jpg_bytes:
+                            zf.writestr(dest_name, jpg_bytes)
+                        else:
+                            zf.write(f, dest_name)
+                    else:
+                        zf.write(f, arcname)
+
+        return zip_path
 
     @staticmethod
     def _submission_record_to_csv_row(record: dict[str, object]) -> list[str]:
@@ -1021,6 +1219,7 @@ class BlindBoxPlugin(Star):
             str(task_snapshot_dict.get("title", "")),
             str(task_snapshot_dict.get("points", 0)),
             "|".join(_parse_qq_list(record.get("image_urls", []))),
+            "|".join(_parse_qq_list(record.get("local_images", []))),
             str(record.get("materials_text", "")),
             task_snapshot_json,
         ]
@@ -1062,14 +1261,26 @@ class BlindBoxPlugin(Star):
             str(record_data.get("score_applied", "")),
             str(record_data.get("submitted_at", "")),
             "|".join(_parse_qq_list(record_data.get("image_urls", []))),
+            "|".join(_parse_qq_list(record_data.get("local_images", []))),
             str(record_data.get("materials_text", "")),
             json.dumps(task_snapshot_dict, ensure_ascii=False) if task_snapshot_dict else task_snapshot_json,
         ]
 
     def _load_submission_records(self, group_no: str) -> list[dict[str, object]]:
-        path = self._submission_file_path(group_no)
+        new_path = self._submission_index_path(group_no)
+        old_path = self._submission_file_path(group_no)
         legacy_path = self._legacy_submission_file_path(group_no)
-        source_path = path if path.exists() else legacy_path if legacy_path.exists() else path
+
+        # 优先读新路径，其次旧路径，最后遗留路径
+        if new_path.exists():
+            source_path = new_path
+        elif old_path.exists():
+            source_path = old_path
+        elif legacy_path.exists():
+            source_path = legacy_path
+        else:
+            source_path = new_path
+
         raw_records = _safe_json_load(source_path, [])
         if not isinstance(raw_records, list):
             return []
@@ -1094,6 +1305,7 @@ class BlindBoxPlugin(Star):
                             for image in record.get("images", [])
                             if isinstance(image, dict)
                         ],
+                        "local_images": _parse_qq_list(record.get("local_images", [])),
                         "source": str(record.get("source", "manual")),
                         "week": str(record.get("week", _week_key())),
                         "task_snapshot": record.get("task_snapshot", {}),
@@ -1106,12 +1318,17 @@ class BlindBoxPlugin(Star):
                         "submitted_at": str(record.get("submitted_at", "")),
                     }
                 )
-        if source_path == legacy_path and path != legacy_path:
-            _safe_json_dump(path, records)
+
+        # 从旧路径迁移到新路径
+        if source_path != new_path:
+            self._group_dir(group_no).mkdir(parents=True, exist_ok=True)
+            _safe_json_dump(new_path, records)
+
         return records
 
     def _save_submission_records(self, group_no: str, records: list[dict[str, object]]) -> None:
-        _safe_json_dump(self._submission_file_path(group_no), records)
+        self._group_dir(group_no).mkdir(parents=True, exist_ok=True)
+        _safe_json_dump(self._submission_index_path(group_no), records)
 
     def _build_submission_record(
         self,
@@ -1123,8 +1340,8 @@ class BlindBoxPlugin(Star):
         images: list[dict[str, str]],
         source: str,
         draw_data: dict[str, object] | None,
+        local_images: list[str] | None = None,
     ) -> dict[str, object]:
-        # 提交记录同时保留文本、图片、任务快照和审核状态。
         return {
             "submission_id": uuid4().hex,
             "group_no": group_no,
@@ -1133,6 +1350,7 @@ class BlindBoxPlugin(Star):
             "materials_text": materials_text,
             "image_urls": image_urls,
             "images": images,
+            "local_images": local_images or [],
             "source": source,
             "week": _week_key(),
             "task_snapshot": draw_data if isinstance(draw_data, dict) else {},
@@ -1154,7 +1372,6 @@ class BlindBoxPlugin(Star):
         images: list[dict[str, str]],
         source: str,
     ) -> dict[str, object]:
-        # 命令提交和 @ 机器人提交都走同一个写入入口，避免数据结构分叉。
         group_data = await self._ensure_group_or_raise(group_no)
         state = await self._get_state()
         draws = state.get("draws", {})
@@ -1165,6 +1382,7 @@ class BlindBoxPlugin(Star):
         if not self._group_has_member(group_data, submitter_qq):
             raise ValueError("提交人必须是本组成员。")
 
+        # 先构建记录，获取 submission_id
         submission = self._build_submission_record(
             group_no=group_no,
             group_data=group_data,
@@ -1175,6 +1393,17 @@ class BlindBoxPlugin(Star):
             source=source,
             draw_data=draw_data if isinstance(draw_data, dict) else None,
         )
+        submission_id = str(submission["submission_id"])
+
+        # 将文字和图片保存到磁盘
+        local_images = await self._save_submission_files(
+            group_no=group_no,
+            submission_id=submission_id,
+            materials_text=materials_text,
+            images=images,
+        )
+        submission["local_images"] = local_images
+
         records = self._load_submission_records(group_no)
         records.append(submission)
         self._save_submission_records(group_no, records)
@@ -1745,6 +1974,7 @@ class BlindBoxPlugin(Star):
                 "task_title",
                 "task_points",
                 "image_urls",
+                "local_images",
                 "materials_text",
                 "task_snapshot_json",
             ])
@@ -1807,6 +2037,7 @@ class BlindBoxPlugin(Star):
                 "score_applied",
                 "submitted_at",
                 "image_urls",
+                "local_images",
                 "materials_text",
                 "task_snapshot_json",
             ])
@@ -1847,6 +2078,63 @@ class BlindBoxPlugin(Star):
         except Exception as exc:  # noqa: BLE001
             logger.exception("blindbox api error")
             return self._json_error(f"内部错误：{exc}")
+
+    async def api_group_export_submission_zip(self):
+        """Web API: 导出指定提交为 ZIP 文件"""
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+        submission_id = str(payload.get("submission_id", "")).strip()
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+            if not submission_id:
+                raise ValueError("submission_id 不能为空。")
+            records = self._load_submission_records(group_no)
+            matched = [r for r in records if str(r.get("submission_id", "")).startswith(submission_id)]
+            if not matched:
+                raise ValueError(f"找不到以 {submission_id} 开头的提交记录。")
+            full_id = str(matched[0]["submission_id"])
+            zip_path = self._export_submission_zip(group_no, full_id)
+            filename = f"blindbox_{group_no}_{full_id[:8]}.zip"
+            return Response(
+                zip_path.read_bytes(),
+                content_type="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Group-No": group_no,
+                    "X-Submission-Id": full_id,
+                },
+            )
+
+        try:
+            return await _handler()
+        except ValueError as exc:
+            return self._json_error(str(exc))
+
+    async def api_group_export_group_zip(self):
+        """Web API: 导出小组全部提交为 ZIP 文件"""
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+            zip_path = self._export_group_zip(group_no)
+            filename = f"blindbox_group_{group_no}_all.zip"
+            return Response(
+                zip_path.read_bytes(),
+                content_type="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Group-No": group_no,
+                },
+            )
+
+        try:
+            return await _handler()
+        except ValueError as exc:
+            return self._json_error(str(exc))
 
     async def api_ai_review(self):
         payload = await self._get_request_json()
@@ -2225,6 +2513,7 @@ class BlindBoxPlugin(Star):
                             "materials_text": str(r.get("materials_text", "") or ""),
                             "image_urls": _parse_qq_list(r.get("image_urls", "") or ""),
                             "images": [],
+                            "local_images": _parse_qq_list(r.get("local_images", "") or ""),
                             "source": str(r.get("source", "manual") or "manual"),
                             "week": str(r.get("week", _week_key())),
                             "task_snapshot": {},
@@ -2236,7 +2525,8 @@ class BlindBoxPlugin(Star):
                             "score_applied": bool(r.get("score_applied", False) and str(r.get("score_applied", "")).lower() in {"1","true","yes","on"}),
                             "submitted_at": str(r.get("submitted_at", _timestamp()) or _timestamp()),
                         })
-                    _safe_json_dump(self._submission_file_path(str(gno)), normalized)
+                    self._group_dir(str(gno)).mkdir(parents=True, exist_ok=True)
+                    _safe_json_dump(self._submission_index_path(str(gno)), normalized)
                 except Exception:
                     logger.exception("写入提交记录失败: %s", gno)
 
@@ -3165,21 +3455,27 @@ class BlindBoxPlugin(Star):
             yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
             return
 
-        if not args:
-            yield event.plain_result("用法：/blindbox submit <任务说明>")
+        # 从消息中提取文字和图片（放在 args 检查之前，支持纯图片提交）
+        _msg_text, image_urls, images = _extract_message_text_and_images(event)
+        materials_text = " ".join(args).strip() if args else ""
+
+        if not materials_text and not images:
+            yield event.plain_result("用法：/blindbox submit <任务说明> [图片]")
             return
 
-        materials_text = " ".join(args).strip()
         submission = await self._create_submission_record(
             group_no=group_no,
             submitter_qq=sender_id,
             materials_text=materials_text,
-            image_urls=[],
-            images=[],
+            image_urls=image_urls,
+            images=images,
             source="command",
         )
 
         submission_id = submission.get("submission_id", "")
+        image_count = len(submission.get("local_images", []))
+        saved_info = f"，已保存 {image_count} 张图片" if image_count else ""
+
         yield event.plain_result(
             "\n".join(
                 [
@@ -3187,15 +3483,60 @@ class BlindBoxPlugin(Star):
                     f"提交编号：{submission_id}",
                     f"当前小组：{group_no} / {group_data.get('group_name', '')}",
                     f"本次关联任务：{submission['task_snapshot'].get('title', '暂无任务') if isinstance(submission['task_snapshot'], dict) else '暂无任务'}",
+                    saved_info,
                 ]
             )
         )
-        
+
         # 记录此次提交以供后续管理员确认
         self._pending_reviews[submission_id] = (group_no, submission)
-        
+
         # 异步启动AI审核流程
         asyncio.create_task(self._trigger_ai_review(event, group_no, submission_id))
+
+    async def _handle_export(self, event: AstrMessageEvent, args: list[str]):
+        """导出提交记录的文件（ZIP格式，含txt和jpg）"""
+        sender_id = self._get_sender_id(event)
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if not group_no or not group_data:
+            yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
+            return
+
+        if not args:
+            yield event.plain_result(
+                "用法：\n"
+                "/blindbox export <提交编号前8位> - 导出指定提交\n"
+                "/blindbox export all - 导出本组全部提交"
+            )
+            return
+
+        arg = args[0].strip().lower()
+        try:
+            if arg == "all":
+                zip_path = self._export_group_zip(group_no)
+            else:
+                submission_id = arg
+                records = self._load_submission_records(group_no)
+                matched = [r for r in records if str(r.get("submission_id", "")).startswith(submission_id)]
+                if not matched:
+                    yield event.plain_result(f"找不到以 {submission_id} 开头的提交记录。")
+                    return
+                if len(matched) > 1:
+                    yield event.plain_result(f"找到 {len(matched)} 条匹配记录，请使用更精确的编号。")
+                    return
+                full_id = str(matched[0]["submission_id"])
+                zip_path = self._export_submission_zip(group_no, full_id)
+
+            yield event.plain_result(
+                f"导出完成！\n"
+                f"文件路径：{zip_path}\n"
+                f"文件大小：{zip_path.stat().st_size / 1024:.1f} KB"
+            )
+        except ValueError as e:
+            yield event.plain_result(str(e))
+        except Exception as e:
+            logger.exception("导出失败: %s", e)
+            yield event.plain_result(f"导出失败：{e}")
 
     async def _handle_at_submission(self, event: AstrMessageEvent):
         # @ 机器人提交功能已被移除：不再处理通过 @ 发来的消息作为提交。
@@ -3240,6 +3581,11 @@ class BlindBoxPlugin(Star):
 
         if head in {"submit", "submit-task", "提交", "交付"}:
             async for result in self._handle_submit(event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"export", "导出"}:
+            async for result in self._handle_export(event, tokens[1:]):
                 yield result
             return
 
@@ -3298,4 +3644,4 @@ class BlindBoxPlugin(Star):
         return
 
     async def terminate(self):
-        logger.info("astrbot_plugin_blindbox terminated")// test
+        logger.info("astrbot_plugin_blindbox terminated")
