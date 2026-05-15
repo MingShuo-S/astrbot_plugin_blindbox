@@ -11,7 +11,7 @@ import aiohttp
 from astrbot.api import logger
 
 
-def _convert_image_to_jpeg(source_path: Path, dest_path: Path) -> bool:
+def convert_image_to_jpeg(source_path: Path, dest_path: Path) -> bool:
     """转换图片为 JPEG 格式"""
     try:
         from PIL import Image as PILImage
@@ -24,7 +24,7 @@ def _convert_image_to_jpeg(source_path: Path, dest_path: Path) -> bool:
         return False
 
 
-async def _download_image(url: str, dest_path: Path) -> bool:
+async def download_image(url: str, dest_path: Path) -> bool:
     """下载图片"""
     try:
         async with aiohttp.ClientSession() as session:
@@ -55,7 +55,7 @@ async def save_submission_files(
 
         url = image_entry.get("url", "")
         if url and url.startswith("http"):
-            saved = await _download_image(url, saved_path)
+            saved = await download_image(url, saved_path)
 
         if not saved:
             src_path = image_entry.get("path", "")
@@ -83,7 +83,7 @@ async def save_submission_files(
 
         if saved_path.suffix.lower() != ".jpg":
             jpg_path = saved_path.with_suffix(".jpg")
-            if _convert_image_to_jpeg(saved_path, jpg_path):
+            if convert_image_to_jpeg(saved_path, jpg_path):
                 try:
                     saved_path.unlink()
                 except OSError:

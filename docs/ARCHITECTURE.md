@@ -32,6 +32,39 @@ astrbot_plugin_blindbox/
     └── context.py                     # AI 上下文和提示词
 ```
 
+### ⚠️ 重要：Python 包导入规范
+
+**本插件是一个 Python 包，必须使用相对导入！**
+
+#### ✅ 正确的导入方式
+
+```python
+# 在 main.py 中（顶层模块）
+from .ai import BlindboxGetPromptTool
+from .business import blindbox as blindbox_ops
+from .config import PLUGIN_NAME
+from .messages import format_help
+from .parser import extract_message_text_and_images
+
+# 在 business/blindbox.py 中（子模块）
+from ..config import batch_id, gen_uuid  # 返回上一级导入 config
+from .storage import normalize_category  # 同级导入
+
+# 在 business/storage.py 中
+from ..config import CATEGORY_ALIASES  # 返回上一级导入 config
+```
+
+#### ❌ 错误的导入方式
+
+```python
+# 绝对导入会导致 "No module named 'ai'" 错误
+from ai import BlindboxGetPromptTool  # ❌
+from business import blindbox  # ❌
+from config import PLUGIN_NAME  # ❌
+```
+
+**原因**：AstrBot 将插件作为 Python 包加载，使用绝对导入会尝试从 Python 路径中查找模块，而不是从当前包中查找。
+
 ### 改进指标
 
 | 指标 | 原版本 | 新版本 | 改进 |

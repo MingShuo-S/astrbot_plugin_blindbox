@@ -8,7 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from config import CATEGORY_ALIASES, default_state
+from ..config import CATEGORY_ALIASES, default_state
 
 
 def safe_json_dump(path: Path, data: object) -> None:

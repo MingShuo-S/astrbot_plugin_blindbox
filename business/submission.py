@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from config import gen_uuid, timestamp, week_key
+from ..config import gen_uuid, timestamp, week_key
 
 
 def build_submission_record(

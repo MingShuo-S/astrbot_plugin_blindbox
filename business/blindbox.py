@@ -5,7 +5,7 @@
 from datetime import datetime
 from random import sample
 
-from config import batch_id, gen_uuid, now, timestamp, week_key
+from ..config import batch_id, gen_uuid, now, timestamp, week_key
 
 from .storage import normalize_category, task_categories, unique_strings
 
