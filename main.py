@@ -680,6 +680,22 @@ class BlindBoxPlugin(Star):
             return payload
         return {}
 
+    async def api_test(self):
+        """测试 API 连接"""
+        self._capture_server_url()
+        if request.method == "OPTIONS":
+            response = Response("", status=200)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return response
+
+        response = jsonify({"success": True, "message": "API 连接正常", "timestamp": datetime.now().isoformat()})
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
     async def api_state(self):
         """获取状态"""
         self._capture_server_url()
