@@ -38,13 +38,16 @@ from ai import (
     build_ai_prompt_context,
 )
 from business import blindbox as blindbox_ops
+from business import export as export_ops
 from business import group as group_ops
 from business import storage as storage_ops
+from business import submission as submission_ops
 from config import (
     DEFAULT_RULES_TEXT,
     DEFAULT_TASKS,
     PLUGIN_NAME,
     KV_STATE_KEY,
+    TASK_CATEGORIES,
     batch_id,
     default_state,
     gen_uuid,
@@ -647,40 +650,6 @@ class BlindBoxPlugin(Star):
 
         return local_images
 
-    def _build_submission_record(
-        self,
-        group_no: str,
-        group_data: dict[str, object],
-        submitter_qq: str,
-        materials_text: str,
-        image_urls: list[str],
-        images: list[dict[str, str]],
-        source: str,
-        draw_data: dict[str, object] | None,
-        local_images: list[str] | None = None,
-    ) -> dict[str, object]:
-        """构建提交记录"""
-        return {
-            "submission_id": gen_uuid(),
-            "group_no": group_no,
-            "group_name": str(group_data.get("group_name", "")),
-            "submitter_qq": submitter_qq,
-            "materials_text": materials_text,
-            "image_urls": image_urls,
-            "images": images,
-            "local_images": local_images or [],
-            "source": source,
-            "week": week_key(),
-            "task_snapshot": draw_data if isinstance(draw_data, dict) else {},
-            "review_status": "pending",
-            "review_reason": "",
-            "reviewer": "",
-            "reviewed_at": "",
-            "awarded_points": 0,
-            "score_applied": False,
-            "submitted_at": timestamp(),
-        }
-
     async def _create_submission_record(
         self,
         group_no: str,
@@ -701,7 +670,7 @@ class BlindBoxPlugin(Star):
         if not self._group_has_member(group_data, submitter_qq):
             raise ValueError("提交人必须是本组成员。")
 
-        submission = self._build_submission_record(
+        submission = submission_ops.build_submission_record(
             group_no=group_no,
             group_data=group_data,
             submitter_qq=submitter_qq,
@@ -1473,9 +1442,700 @@ class BlindBoxPlugin(Star):
 
         return await self._api_result(_handler)
 
-    async def terminate(self):
-        """插件终止"""
-        logger.info("astrbot_plugin_blindbox terminated")
+    # =========================================================================
+    # 群消息命令入口
+    # =========================================================================
+
+    async def _add_members_to_group(
+        self,
+        group_no: str,
+        target_qqs: list[str],
+        actor_qq: str | None = None,
+    ) -> dict[str, object]:
+        state = await self._get_state()
+        result = await group_ops.add_members_to_group(state, group_no, target_qqs, actor_qq=actor_qq)
+        await self._save_state()
+        return result
+
+    def _can_draw_again(
+        self, draw_data: dict[str, object] | None, records: list[dict[str, object]]
+    ) -> tuple[bool, str]:
+        return blindbox_ops.can_draw_again(draw_data, records)
+
+    async def _draw_for_group(
+        self, group_no: str, category: str, force_redraw: bool, actor_qq: str | None = None
+    ) -> tuple[list[dict[str, object]], bool, str, str]:
+        state = await self._get_state()
+        tasks = await self._get_tasks()
+        return await blindbox_ops.draw_for_group(
+            state=state,
+            group_no=group_no,
+            category=category,
+            force_redraw=force_redraw,
+            tasks=tasks,
+            actor_qq=actor_qq,
+        )
+
+    async def _confirm_selection(
+        self, group_no: str, selection_id: str, choice: int, actor_qq: str | None = None
+    ) -> dict[str, object]:
+        state = await self._get_state()
+        draw_data = await blindbox_ops.confirm_selection(
+            state=state,
+            group_no=group_no,
+            selection_id=selection_id,
+            choice=choice,
+            actor_qq=actor_qq,
+        )
+        await self._save_state()
+        return draw_data
+
+    def _export_submission_zip(self, group_no: str, submission_id: str) -> Path:
+        folder = self._submission_folder(group_no, submission_id)
+        return export_ops.export_submission_zip(folder, EXPORT_DIR, group_no, submission_id)
+
+    def _export_group_zip(self, group_no: str) -> Path:
+        group_dir = self._group_dir(group_no)
+        return export_ops.export_group_zip(group_dir, EXPORT_DIR, group_no)
+
+    async def _handle_group_command(self, event: AstrMessageEvent, args: list[str]):
+        if not args:
+            yield event.plain_result(_format_help())
+            return
+
+        action = args[0].lower()
+        state = await self._get_state()
+        groups = state.setdefault("groups", {})
+        draws = state.setdefault("draws", {})
+        sender_id = self._get_sender_id(event)
+
+        if action == "help":
+            yield event.plain_result(_format_help())
+            return
+
+        if action == "list":
+            if not groups:
+                yield event.plain_result("当前还没有创建任何小组。")
+                return
+
+            lines = ["【小组列表】"]
+            for group_no in sorted(groups.keys(), key=str):
+                group_data = groups[group_no]
+                if isinstance(group_data, dict):
+                    lines.append(self._build_group_summary(str(group_no), group_data))
+                    lines.append("")
+            yield event.plain_result("\n".join(lines).rstrip())
+            return
+
+        if action == "info":
+            if len(args) < 2:
+                yield event.plain_result("用法：/blindbox group info <序号>")
+                return
+            group_no = str(args[1]).strip()
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"序号为 {group_no} 的小组不存在。")
+                return
+            lines = ["【小组信息】", self._build_group_summary(group_no, group_data)]
+            current_draw = draws.get(group_no, {})
+            if isinstance(current_draw, dict) and current_draw.get("week") == week_key():
+                lines.extend(
+                    [
+                        "",
+                        "【本周盲盒】",
+                        f"{current_draw.get('category', '')} - {current_draw.get('title', '')}",
+                        f"建议积分：{current_draw.get('points', 0)} 分",
+                    ]
+                )
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if action == "create":
+            if len(args) < 4:
+                yield event.plain_result("用法：/blindbox group create <序号> <组名> <第一个QQ是组长> [QQ号...]")
+                return
+
+            group_no = str(args[1]).strip()
+            group_name = str(args[2]).strip()
+            qq_list = _unique_strings(args[3:])
+
+            try:
+                group_data = await group_ops.create_group(await self._get_state(), group_no, group_name, qq_list)
+                await self._save_state()
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+
+            yield event.plain_result(
+                "\n".join(
+                    [
+                        f"已创建小组 {group_data['group_no']}：{group_data['group_name']}",
+                        f"组长：{group_data['leader_qq']}",
+                        f"成员：{'、'.join(group_data['members'])}",
+                    ]
+                )
+            )
+            return
+
+        if action in {"add", "bind"}:
+            if len(args) < 3:
+                yield event.plain_result("用法：/blindbox group add <序号> <QQ号...>")
+                return
+
+            group_no = str(args[1]).strip()
+            target_qqs = _unique_strings(args[2:])
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"序号为 {group_no} 的小组不存在。")
+                return
+
+            result = await self._add_members_to_group(group_no, target_qqs, actor_qq=sender_id)
+            lines = [f"已向小组 {group_no} 添加成员。"]
+            if result["added"]:
+                lines.append(f"新增：{'、'.join(result['added'])}")
+            if result["skipped"]:
+                lines.append(f"跳过：{'、'.join(result['skipped'])}")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if action == "remove":
+            if len(args) < 3:
+                yield event.plain_result("用法：/blindbox group remove <序号> <QQ号...>")
+                return
+
+            group_no = str(args[1]).strip()
+            target_qqs = _unique_strings(args[2:])
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"序号为 {group_no} 的小组不存在。")
+                return
+
+            result = await group_ops.remove_members(await self._get_state(), group_no, target_qqs, actor_qq=sender_id)
+            await self._save_state()
+
+            if result.get("dissolved"):
+                yield event.plain_result(
+                    f"成员已移除，小组 {group_no} 为空，已自动解散。"
+                    + (f"\n移除：{'、'.join(result['removed'])}" if result.get("removed") else "")
+                )
+                return
+
+            lines = [f"已从小组 {group_no} 移除成员。"]
+            if result.get("removed"):
+                lines.append(f"移除：{'、'.join(result['removed'])}")
+            if result.get("skipped"):
+                lines.append(f"未处理：{'、'.join(result['skipped'])}")
+            if group_data.get("leader_qq") != result.get("group", {}).get("leader_qq"):
+                lines.append(f"新的组长：{result['group'].get('leader_qq', '')}")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if action == "request-dissolve":
+            if len(args) < 2:
+                yield event.plain_result("用法：/blindbox group request-dissolve <序号>")
+                return
+
+            group_no = str(args[1]).strip()
+            try:
+                group_data = await group_ops.set_dissolve_requested(
+                    await self._get_state(), group_no, actor_qq=sender_id, requested=True
+                )
+                await self._save_state()
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+            yield event.plain_result(f"已为小组 {group_no} 标记解散申请。")
+            return
+
+        if action == "request-cancel":
+            if len(args) < 2:
+                yield event.plain_result("用法：/blindbox group request-cancel <序号>")
+                return
+
+            group_no = str(args[1]).strip()
+            try:
+                await group_ops.set_dissolve_requested(
+                    await self._get_state(), group_no, actor_qq=sender_id, requested=False
+                )
+                await self._save_state()
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+            yield event.plain_result(f"已取消小组 {group_no} 的解散申请。")
+            return
+
+        if action == "transfer":
+            if len(args) < 3:
+                yield event.plain_result("用法：/blindbox group transfer <序号> <新组长QQ>")
+                return
+
+            group_no = str(args[1]).strip()
+            new_leader_qq = str(args[2]).strip()
+            try:
+                group_data = await group_ops.transfer_leader(
+                    await self._get_state(), group_no, new_leader_qq, actor_qq=sender_id
+                )
+                await self._save_state()
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+
+            yield event.plain_result(
+                "\n".join(
+                    [
+                        f"已将小组 {group_no} 的组长转让给 {group_data['leader_qq']}",
+                        f"当前组名：{group_data.get('group_name', '')}",
+                    ]
+                )
+            )
+            return
+
+        if action == "rename":
+            if len(args) < 3:
+                yield event.plain_result("用法：/blindbox group rename <序号> <新组名>")
+                return
+
+            group_no = str(args[1]).strip()
+            new_group_name = " ".join(args[2:]).strip()
+            try:
+                group_data = await group_ops.rename_group(
+                    await self._get_state(), group_no, new_group_name, actor_qq=sender_id
+                )
+                await self._save_state()
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+
+            yield event.plain_result(
+                "\n".join(
+                    [
+                        f"已将小组 {group_no} 改名为 {group_data['group_name']}",
+                        f"当前组长：{group_data.get('leader_qq', '')}",
+                    ]
+                )
+            )
+            return
+
+        yield event.plain_result(_format_help())
+
+    async def _handle_whoami(self, event: AstrMessageEvent):
+        try:
+            sender_id = self._get_sender_id(event)
+        except ValueError:
+            yield event.plain_result("无法识别发送者，请稍后重试。")
+            return
+
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if not group_no or not group_data:
+            yield event.plain_result("你当前还没有加入任何小组。")
+            return
+
+        lines = [
+            "【我的小组信息】",
+            self._build_group_summary(group_no, group_data),
+        ]
+
+        draws = (await self._get_state()).get("draws", {})
+        current_draw = draws.get(group_no, {}) if isinstance(draws, dict) else {}
+        if isinstance(current_draw, dict) and current_draw.get("week") == week_key():
+            lines.extend(
+                [
+                    "",
+                    "【本周盲盒】",
+                    f"{current_draw.get('category', '')} - {current_draw.get('title', '')}",
+                    f"建议积分：{current_draw.get('points', 0)} 分",
+                ]
+            )
+
+        yield event.plain_result("\n".join(lines))
+
+    async def _handle_draw(self, event: AstrMessageEvent, args: list[str], force_redraw: bool = False):
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                yield event.plain_result("请在大群抽取盲盒与任务提交~")
+                return
+        except ValueError:
+            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            return
+
+        sender_id = self._get_sender_id(event)
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if not group_no or not group_data:
+            yield event.plain_result(
+                f"QQ 号 {sender_id} 还没有绑定到任何小组。请先使用 /blindbox group create 或 /blindbox group add。"
+            )
+            return
+
+        state = await self._get_state()
+        draws = state.get("draws", {})
+        current_draw = draws.get(group_no)
+        records = self._load_submission_records(group_no)
+
+        can_draw, reason_msg = self._can_draw_again(current_draw, records)
+        if not can_draw and not force_redraw:
+            yield event.plain_result(reason_msg)
+            return
+
+        category = args[0] if args else "全部"
+
+        try:
+            picked_tasks, created_new, status_msg, selection_id = await self._draw_for_group(
+                group_no, category, force_redraw, actor_qq=sender_id
+            )
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+
+        lines = [
+            "【南京大学行知×开甲 学习小组 · 抽奖盲盒】\n",
+            "恭喜抽到以下任务，请选择其中一个：\n",
+        ]
+
+        for i, task in enumerate(picked_tasks, 1):
+            lines.append(f"{i}. 【{task['category']}】{task['title']}")
+            lines.append(f"   建议积分：{task['points']} 分")
+            if task.get("description"):
+                lines.append(f"   说明：{task['description']}")
+
+        lines.append("")
+        lines.append("请回复数字 1/2/3 来选择任务")
+        lines.append("")
+        lines.append(f"当前小组：{group_no} - {group_data.get('group_name', '')}")
+        lines.append(f"组长：{group_data.get('leader_qq', '')}")
+
+        if not hasattr(self, "_user_selections"):
+            self._user_selections = {}
+        self._user_selections[sender_id] = {
+            "selection_id": selection_id,
+            "group_no": group_no,
+            "created_at": now(),
+        }
+
+        yield event.plain_result("\n".join(lines))
+
+    async def _trigger_ai_review(self, event: AstrMessageEvent, group_no: str, submission_id: str):
+        try:
+            umo = event.unified_msg_origin
+            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+
+            prompt = (
+                f"有一条新的盲盒任务提交需要审核。\n\n"
+                f"小组序号：{group_no}\n"
+                f"提交编号：{submission_id}\n\n"
+                f"请使用 blindbox_get_submissions 工具查看待审核提交的详细内容，"
+                f"然后根据审核指南进行审核，最后调用 blindbox_review_submission 工具提交审核结果。"
+            )
+
+            llm_resp = await self.context.tool_loop_agent(
+                event=event,
+                chat_provider_id=prov_id,
+                prompt=prompt,
+                system_prompt=self._build_ai_prompt_context(),
+                tools=ToolSet(
+                    [
+                        BlindboxGetSubmissionsTool(plugin_instance=self),
+                        BlindboxGetPromptTool(plugin_instance=self),
+                        BlindboxReviewSubmissionTool(plugin_instance=self),
+                    ]
+                ),
+                max_steps=10,
+            )
+
+            completion = llm_resp.completion_text or ""
+            error_markers = [
+                "All chat models failed",
+                "BadRequestError",
+                "invalid_request_error",
+                "thinking in the thinking mode must be passed back",
+                "content[].thinking",
+                "ProviderNotFoundError",
+                "AuthenticationError",
+                "RateLimitError",
+            ]
+            if any(marker in completion for marker in error_markers):
+                await event.send(
+                    MessageChain(
+                        [
+                            Plain(
+                                f"[AI 审核失败] 提交编号 {submission_id} 自动审核未能完成。\n"
+                                "原因：AI 模型服务异常，请管理员手动审核。\n\n"
+                                f"审核通过：/blindbox pass {submission_id}\n"
+                                f"审核拒绝：/blindbox deny {submission_id}"
+                            )
+                        ]
+                    )
+                )
+                return
+
+            result_msg = (
+                f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n"
+                f"{completion}\n\n"
+                f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+            )
+            await event.send(MessageChain([Plain(result_msg)]))
+
+        except Exception as exc:
+            logger.error("AI审核出错：%s", exc, exc_info=True)
+            await event.send(
+                MessageChain(
+                    [
+                        Plain(
+                            f"[AI 审核异常] 提交编号 {submission_id} 自动审核遇到错误。\n"
+                            f"错误：{exc}\n\n"
+                            f"请管理员手动审核：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+                        )
+                    ]
+                )
+            )
+
+    async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
+        try:
+            if submission_id not in self._pending_reviews:
+                yield event.plain_result(f"找不到提交编号 {submission_id} 的待确认审核。")
+                return
+
+            group_no, submission = self._pending_reviews[submission_id]
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no)
+
+            if not group_data:
+                yield event.plain_result(f"小组 {group_no} 不存在。")
+                return
+
+            draws = state.get("draws", {})
+            draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+            records = self._load_submission_records(group_no)
+
+            target_record = None
+            for record in records:
+                if isinstance(record, dict) and record.get("submission_id") == submission_id:
+                    target_record = record
+                    break
+
+            if target_record is None:
+                yield event.plain_result(f"找不到提交记录 {submission_id}。")
+                return
+
+            previous_award = int(target_record.get("awarded_points", 0))
+            previously_applied = bool(target_record.get("score_applied", False))
+            if previously_applied and previous_award:
+                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+
+            approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
+            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            applied_points = score_delta if approved else 0
+
+            target_record.update(
+                {
+                    "review_status": verdict or "pending",
+                    "review_reason": "管理员确认",
+                    "reviewer": str(self._get_sender_id(event)),
+                    "reviewed_at": timestamp(),
+                    "score_applied": bool(applied_points),
+                    "awarded_points": applied_points,
+                }
+            )
+
+            if approved:
+                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+
+            self._save_submission_records(group_no, records)
+            await self._save_state()
+
+            del self._pending_reviews[submission_id]
+
+            verdict_text = "通过✅" if approved else "拒绝❌"
+            yield event.plain_result(
+                "审核确认完成！\n"
+                f"提交编号：{submission_id}\n"
+                f"小组：{group_data.get('group_name', '')}\n"
+                f"结果：{verdict_text}\n"
+                f"本轮积分：{applied_points}"
+            )
+
+        except Exception as exc:
+            logger.error("管理员确认审核出错：%s", exc, exc_info=True)
+            yield event.plain_result(f"确认审核出错：{exc}")
+
+    async def _handle_selection_response(self, event: AstrMessageEvent, choice_text: str):
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                return
+        except ValueError:
+            return
+
+        sender_id = self._get_sender_id(event)
+        if not hasattr(self, "_user_selections"):
+            self._user_selections = {}
+
+        if sender_id not in self._user_selections:
+            return
+
+        selection_info = self._user_selections[sender_id]
+        selection_id = selection_info.get("selection_id", "")
+        group_no = selection_info.get("group_no", "")
+
+        created_at = selection_info.get("created_at")
+        if created_at and (now() - created_at).total_seconds() > 300:
+            del self._user_selections[sender_id]
+            yield event.plain_result("选择已过期，请重新抽取。")
+            return
+
+        try:
+            choice = int(choice_text.strip())
+            if choice not in {1, 2, 3}:
+                yield event.plain_result("请选择 1、2 或 3")
+                return
+        except (ValueError, AttributeError):
+            return
+
+        try:
+            draw_data = await self._confirm_selection(group_no, selection_id, choice, actor_qq=sender_id)
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            if sender_id in self._user_selections:
+                del self._user_selections[sender_id]
+            return
+
+        del self._user_selections[sender_id]
+
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        group_data = groups.get(group_no, {})
+
+        lines = [
+            "【任务已确定】",
+            f"分类：{draw_data.get('category', '')}",
+            f"任务：{draw_data.get('title', '')}",
+            f"建议积分：{draw_data.get('points', 0)} 分",
+            "",
+            f"当前小组：{group_no} - {group_data.get('group_name', '')}",
+            f"本周截止日期：{draw_data.get('drawn_at', '')} 起，一周内需完成",
+            "",
+            "使用 /blindbox submit <任务说明> 来提交任务成果。",
+        ]
+
+        yield event.plain_result("\n".join(lines))
+
+    async def _handle_submit(self, event: AstrMessageEvent, args: list[str]):
+        try:
+            group_id = self._get_group_id(event)
+            if not self._check_group_whitelist(group_id):
+                yield event.plain_result("请在大群抽取盲盒与任务提交~")
+                return
+        except ValueError:
+            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            return
+
+        sender_id = self._get_sender_id(event)
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if not group_no or not group_data:
+            yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
+            return
+
+        _msg_text, image_urls, images = _extract_message_text_and_images(event)
+        materials_text = " ".join(args).strip() if args else ""
+
+        if not materials_text and not images:
+            yield event.plain_result("用法：/blindbox submit <任务说明> [图片]")
+            return
+
+        submission = await self._create_submission_record(
+            group_no=group_no,
+            submitter_qq=sender_id,
+            materials_text=materials_text,
+            image_urls=image_urls,
+            images=images,
+            source="command",
+        )
+
+        submission_id = submission.get("submission_id", "")
+        image_count = len(submission.get("local_images", []))
+        saved_info = f"，已保存 {image_count} 张图片" if image_count else ""
+
+        yield event.plain_result(
+            "\n".join(
+                [
+                    "已提交任务材料，等待 AI 审核。",
+                    f"提交编号：{submission_id}",
+                    f"当前小组：{group_no} / {group_data.get('group_name', '')}",
+                    f"本次关联任务：{submission['task_snapshot'].get('title', '暂无任务') if isinstance(submission['task_snapshot'], dict) else '暂无任务'}",
+                    saved_info,
+                ]
+            )
+        )
+
+        self._pending_reviews[submission_id] = (group_no, submission)
+        asyncio.create_task(self._trigger_ai_review(event, group_no, submission_id))
+
+    async def _handle_export(self, event: AstrMessageEvent, args: list[str]):
+        sender_id = self._get_sender_id(event)
+
+        if not args:
+            yield event.plain_result(
+                "用法：\n"
+                "/blindbox export <提交编号前8位> [组号] - 导出指定提交\n"
+                "/blindbox export all [组号] - 导出全部提交"
+            )
+            return
+
+        arg = args[0].strip().lower()
+        specified_group_no = ""
+        if len(args) >= 2:
+            specified_group_no = args[1].strip()
+
+        if specified_group_no:
+            group_no = specified_group_no
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no) if isinstance(groups, dict) else None
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"小组 {group_no} 不存在。")
+                return
+        else:
+            group_no, group_data = await self._find_group_by_member(sender_id)
+            if not group_no or not group_data:
+                yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
+                return
+
+        try:
+            if arg == "all":
+                records = self._load_submission_records(group_no)
+                if not records:
+                    yield event.plain_result(f"小组 {group_no} 还没有提交记录。")
+                    return
+                zip_path = self._export_group_zip(group_no)
+                url = await self._register_for_download(zip_path)
+                yield event.plain_result(
+                    f"导出小组 {group_no} 全部提交：\n"
+                    f"共 {len(records)} 条记录\n\n"
+                    f"下载链接（5分钟内有效，仅可下载一次）：\n{url}"
+                )
+            else:
+                submission_id = arg
+                records = self._load_submission_records(group_no)
+                matched = [r for r in records if str(r.get("submission_id", "")).startswith(submission_id)]
+                if not matched:
+                    yield event.plain_result(f"找不到以 {submission_id} 开头的提交记录。")
+                    return
+                if len(matched) > 1:
+                    yield event.plain_result(f"找到 {len(matched)} 条匹配记录，请使用更精确的编号。")
+                    return
+                full_id = str(matched[0]["submission_id"])
+                zip_path = self._export_submission_zip(group_no, full_id)
+                url = await self._register_for_download(zip_path)
+                yield event.plain_result(
+                    f"导出提交 {full_id[:8]}...\n"
+                    f"下载链接（5分钟内有效，仅可下载一次）：\n{url}"
+                )
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+        except Exception as exc:
+            logger.exception("导出失败: %s", exc)
+            yield event.plain_result(f"导出失败：{exc}")
 
     # =========================================================================
     # 事件处理（消息命令等）
@@ -1483,18 +2143,113 @@ class BlindBoxPlugin(Star):
 
     @filter.command("blindbox")
     async def blindbox(self, event: AstrMessageEvent):
-        """主命令处理"""
+        # 命令入口：解析 /blindbox 子命令并分发到对应处理器
         raw_message = event.message_str.strip()
         tokens = _strip_root_command(_split_tokens(raw_message))
 
         if not tokens:
-            yield event.plain_result(_format_help())
+            async for result in self._handle_draw(event, [], force_redraw=False):
+                yield result
             return
 
         head = tokens[0].lower()
-        
+
         if head in {"help", "?", "h"}:
             yield event.plain_result(_format_help())
             return
 
+        if head in {"group", "g"}:
+            # 小组管理子命令（create/add/remove/transfer/rename/request-*)
+            async for result in self._handle_group_command(event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"draw", "抽取", "抽奖"}:
+            # 抽取任务（三选一）
+            async for result in self._handle_draw(event, tokens[1:], force_redraw=False):
+                yield result
+            return
+
+        if head in {"redraw", "reroll", "重抽", "重抽取"}:
+            # 强制重抽当前任务
+            async for result in self._handle_draw(event, tokens[1:], force_redraw=True):
+                yield result
+            return
+
+        if head in {"me", "mine", "whoami", "我是谁", "我的组"}:
+            # 查看当前发送者所属小组
+            async for result in self._handle_whoami(event):
+                yield result
+            return
+
+        if head in {"submit", "submit-task", "提交", "交付"}:
+            # 提交任务材料（文字/图片）
+            async for result in self._handle_submit(event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"export", "导出"}:
+            # 导出提交记录（单条或整组）
+            async for result in self._handle_export(event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"pass", "approve", "通过"}:
+            # 管理员确认通过审核
+            if len(tokens) < 2:
+                yield event.plain_result("用法：/blindbox pass <提交编号>")
+                return
+            submission_id = str(tokens[1]).strip()
+            async for result in self._confirm_review(event, submission_id, "approved"):
+                yield result
+            return
+
+        if head in {"deny", "reject", "拒绝", "驳回"}:
+            # 管理员确认拒绝审核
+            if len(tokens) < 2:
+                yield event.plain_result("用法：/blindbox deny <提交编号>")
+                return
+            submission_id = str(tokens[1]).strip()
+            async for result in self._confirm_review(event, submission_id, "rejected"):
+                yield result
+            return
+
+        if _normalize_category(tokens[0]) in TASK_CATEGORIES or _normalize_category(tokens[0]) == "全部":
+            # 直接使用分类名称抽取
+            async for result in self._handle_draw(event, [tokens[0]], force_redraw=False):
+                yield result
+            return
+
         yield event.plain_result(_format_help())
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=5)
+    async def handle_selection_choice(self, event: AstrMessageEvent):
+        # 处理用户对任务选项的数字回复（1/2/3）
+        try:
+            text = event.message_str.strip()
+            if text in {"1", "2", "3"}:
+                async for result in self._handle_selection_response(event, text):
+                    yield result
+        except Exception:
+            pass
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-1)
+    async def track_group_member(self, event: AstrMessageEvent):
+        # 低优先级日志：记录消息归属的小组，不改变业务状态
+        try:
+            sender_id = self._get_sender_id(event)
+        except ValueError:
+            return
+
+        group_no, group_data = await self._find_group_by_member(sender_id)
+        if group_no and group_data:
+            logger.info(
+                "blindbox message matched group: sender=%s group=%s(%s)",
+                sender_id,
+                group_no,
+                group_data.get("group_name", ""),
+            )
+
+    async def terminate(self):
+        """插件终止"""
+        logger.info("astrbot_plugin_blindbox terminated")

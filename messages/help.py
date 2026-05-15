@@ -23,6 +23,7 @@ def generate_commands_help() -> str:
         "  /blindbox group transfer <序号> <新组长QQ> - 转让组长",
         "  /blindbox group rename <序号> <新组名> - 改名小组",
         "  /blindbox group request-dissolve <序号> - 申请解散",
+        "  /blindbox group request-cancel <序号> - 取消解散",
         "",
         "📝 提交命令：",
         "  /blindbox submit <说明> - 提交任务材料（支持附带图片）",

@@ -46,46 +46,6 @@ def extract_message_text_and_images(
     return text, image_urls, images
 
 
-def message_mentions_bot(event: AstrMessageEvent) -> bool:
-    """判断消息是否提及了机器人"""
-    if bool(getattr(event, "is_at_or_wake_command", False)):
-        return True
-
-    message_obj = getattr(event, "message_obj", None)
-    self_id = str(getattr(message_obj, "self_id", "") or "").strip()
-    if not self_id:
-        return False
-
-    for component in get_message_components(event):
-        if isinstance(component, At):
-            qq = str(getattr(component, "qq", "")).strip()
-            if qq in {self_id, "all"}:
-                return True
-    return False
-
-
-def message_starts_with_bot_at(event: AstrMessageEvent) -> bool:
-    """判断消息的第一个非 Plain 组件是否为 @ 机器人
-    
-    仅当消息以 @ 机器人 开头时返回 True，避免在对话中间随便 @ 就触发提交。
-    """
-    message_obj = getattr(event, "message_obj", None)
-    self_id = str(getattr(message_obj, "self_id", "") or "").strip()
-    if not self_id:
-        return False
-
-    for component in get_message_components(event):
-        if isinstance(component, Plain):
-            text = str(getattr(component, "text", "") or "").strip()
-            if text:
-                return False
-            continue
-        if isinstance(component, At):
-            qq = str(getattr(component, "qq", "") or "").strip()
-            return qq in {self_id, "all"}
-        return False
-    return False
-
 
 def split_tokens(raw_message: str) -> list[str]:
     """将消息分割成 token 列表"""

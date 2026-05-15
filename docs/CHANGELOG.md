@@ -39,9 +39,8 @@
 ### 文档更新
 
 - 新增 **ARCHITECTURE.md**：详细的架构设计文档
-- 新增 **MODULARIZATION_GUIDE.md**：迁移指南
-- 新增 **REFACTORING_SUMMARY.md**：重构总结
-- 整理文档结构，删除冗余文档
+- 文档统一收拢到 `docs/` 目录，README 保留在根目录
+- 删除冗余文档并合并内容
 
 ### 代码质量
 

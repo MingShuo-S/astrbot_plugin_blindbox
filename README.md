@@ -2,16 +2,12 @@
 
 这是一个面向南京大学行知×开甲学习小组的 AstrBot「抽奖盲盒」插件，任务列表可以直接在 AstrBot WebUI 里编辑。
 
-> **👉 新手看这里**：
-> - [GUIDE.md](GUIDE.md) - 日常使用指南（非常容易理解）
-> - [AI_INTEGRATION.md](AI_INTEGRATION.md) - 技术细节（给开发者看）
-
 > **👉 快速导航**：
-> - **[GUIDE.md](GUIDE.md)** - 日常使用指南（新手必读）
-> - **[ARCHITECTURE.md](ARCHITECTURE.md)** - 架构设计和模块化说明（v0.8.0+）
-> - **[CSV_IMPORT_GUIDE.md](CSV_IMPORT_GUIDE.md)** - CSV 数据导入指南
-> - **[AI_INSTRUCTIONS.md](AI_INSTRUCTIONS.md)** - AI 审核工具说明（给 AI 看）
-> - **[CHANGELOG.md](CHANGELOG.md)** - 版本更新记录
+> - **[docs/GUIDE.md](docs/GUIDE.md)** - 日常使用指南（新手必读）
+> - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - 架构设计和模块化说明（v0.8.0+）
+> - **[docs/CSV_IMPORT_GUIDE.md](docs/CSV_IMPORT_GUIDE.md)** - CSV 数据导入指南
+> - **[docs/AI_INSTRUCTIONS.md](docs/AI_INSTRUCTIONS.md)** - AI 审核工具说明（给 AI 看）
+> - **[docs/CHANGELOG.md](docs/CHANGELOG.md)** - 版本更新记录
 >
 > ℹ️ **已删除的文档**：AI_INTEGRATION.md 和 AI_QUICK_REFERENCE.md 的内容已合并到本文档和 ARCHITECTURE.md
 

@@ -5,34 +5,22 @@
 ### 保留的文档（6 个）
 最终形成了**清晰、无冗余**的文档结构：
 
-| 文件 | 大小 | 用途 |
+| 文件 | 位置 | 用途 |
 |------|------|------|
-| **README.md** | 11.5 KB | 🏠 主文档（快速导航、功能概览、API 说明） |
-| **GUIDE.md** | 9.3 KB | 📖 使用指南（非技术人员日常使用） |
-| **ARCHITECTURE.md** | 7.0 KB | 🏗️ 架构设计（v0.8.0 模块化重构详解） |
-| **CSV_IMPORT_GUIDE.md** | 2.9 KB | 📊 数据导入指南（特定功能） |
-| **AI_INSTRUCTIONS.md** | 8.9 KB | 🤖 AI 审核说明（给 AI 看的） |
-| **CHANGELOG.md** | 5.1 KB | 📝 版本记录（v0.8.0 重构更新） |
+| **README.md** | 根目录 | 🏠 主文档（快速导航、功能概览、API 说明） |
+| **GUIDE.md** | docs/ | 📖 使用指南（非技术人员日常使用） |
+| **ARCHITECTURE.md** | docs/ | 🏗️ 架构设计（v0.8.0 模块化重构详解） |
+| **CSV_IMPORT_GUIDE.md** | docs/ | 📊 数据导入指南（特定功能） |
+| **AI_INSTRUCTIONS.md** | docs/ | 🤖 AI 审核说明（给 AI 看的） |
+| **CHANGELOG.md** | docs/ | 📝 版本记录（v0.8.0 重构更新） |
 
 **总大小**：~45 KB（相比之前的 9 个文件更精简）
 
-### 删除的文档（4 个）
-内容已完全合并到主文档中：
-
-| 原文件 | 合并到 | 原因 |
-|--------|--------|------|
-| **AI_INTEGRATION.md** | README.md + ARCHITECTURE.md | AI 工作流合并到 README，架构细节到 ARCHITECTURE |
-| **AI_QUICK_REFERENCE.md** | README.md | AI API 快速参考合并到 README |
-| **MODULARIZATION_GUIDE.md** | ARCHITECTURE.md | 模块化迁移指南合并到新的 ARCHITECTURE |
-| **REFACTORING_SUMMARY.md** | CHANGELOG.md | 重构总结合并到 v0.8.0 的更新记录 |
-
-## 🗂️ 新的文档导航结构
-
 ```
-astrbot_plugin_blindbox 文档树
+├─ CSV_IMPORT_GUIDE.md
 │
 ├─ README.md ⭐ 【主入口】
-│  ├─ 快速导航 ➜ 指向其他文档
+│  ├─ 快速导航 ➜ 指向 docs/ 内文档
 │  ├─ 功能概览表
 │  ├─ 项目结构说明
 │  ├─ 指令大全
@@ -42,22 +30,34 @@ astrbot_plugin_blindbox 文档树
 │  ├─ 数据存储
 │  └─ 小组配置管理
 │
-├─ GUIDE.md
-│  ├─ 参与者指南
-│  ├─ 组长指南
-│  └─ 管理员指南
-│
-├─ ARCHITECTURE.md ✨ (新建)
-│  ├─ 模块化架构 (v0.8.0+)
-│  ├─ 核心模块说明 (5 个 + config)
-│  ├─ 设计原则
-│  ├─ 数据流图
-│  ├─ 迁移指南
-│  ├─ 代码质量指标
-│  ├─ 向后兼容性
-│  └─ 后续优化方向
-│
-├─ CSV_IMPORT_GUIDE.md
+└─ docs/
+  ├─ GUIDE.md
+  │  ├─ 参与者指南
+  │  ├─ 组长指南
+  │  └─ 管理员指南
+  │
+  ├─ ARCHITECTURE.md ✨ (新建)
+  │  ├─ 模块化架构 (v0.8.0+)
+  │  ├─ 核心模块说明 (5 个 + config)
+  │  ├─ 设计原则
+  │  ├─ 数据流图
+  │  ├─ 迁移指南
+  │  ├─ 代码质量指标
+  │  ├─ 向后兼容性
+  │  └─ 后续优化方向
+  │
+  ├─ CSV_IMPORT_GUIDE.md
+  │  └─ 数据导入详解
+  │
+  ├─ AI_INSTRUCTIONS.md
+  │  ├─ 给 AI 看的工作流程
+  │  ├─ 可用的 3 个工具
+  │  └─ 审核标准
+  │
+  └─ CHANGELOG.md
+    ├─ v0.8.0 (2026-05-16) ✨ 模块化重构
+    └─ v0.7.0 (2024-05-12)
+```
 │  └─ 数据导入详解
 │
 ├─ AI_INSTRUCTIONS.md
