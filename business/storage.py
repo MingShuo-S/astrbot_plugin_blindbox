@@ -130,7 +130,7 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
     """规范化状态数据结构"""
     from datetime import datetime
 
-    from config import batch_id, week_key
+    from ..config import batch_id, week_key
 
     if not isinstance(raw_state, dict):
         return default_state()
@@ -196,7 +196,7 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
 
     # 清理过期的待选择记录（超过5分钟）
     if isinstance(pending_selections, dict):
-        from config import now
+        from ..config import now
 
         current_time = now()
         for selection_id, selection_data in pending_selections.items():
