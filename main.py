@@ -199,6 +199,18 @@ class BlindBoxPlugin(Star):
 
         self._register_web_apis(context)
 
+    def _get_sender_id(self, event: AstrMessageEvent) -> str:
+        """获取发送者 QQ 号"""
+        return get_sender_id(event)
+
+    def _get_group_id(self, event: AstrMessageEvent) -> str:
+        """获取群号"""
+        return get_group_id(event)
+
+    def _format_help(self) -> str:
+        """格式化帮助信息"""
+        return format_help()
+
     def _capture_server_url(self) -> None:
         """从 Web 请求中自动检测服务器基址 URL"""
         if self._server_base_url:
@@ -658,6 +670,114 @@ class BlindBoxPlugin(Star):
             local_images.append(saved_path.name)
 
         return local_images
+
+    async def _create_submission_record(
+        self,
+        group_no: str,
+        submitter_qq: str,
+        materials_text: str,
+        image_urls: list[str],
+        images: list[dict[str, str]],
+        source: str,
+    ) -> dict[str, object]:
+        """创建提交记录"""
+        from .business.submission import build_submission_record
+        
+        group_data = await self._ensure_group_or_raise(group_no)
+        state = await self._get_state()
+        draws = state.get("draws", {})
+        draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+
+        if not submitter_qq:
+            raise ValueError("submitter_qq 不能为空。")
+        if not self._group_has_member(group_data, submitter_qq):
+            raise ValueError("提交人必须是本组成员。")
+
+        # 先构建记录，获取 submission_id
+        submission = build_submission_record(
+            group_no=group_no,
+            group_data=group_data,
+            submitter_qq=submitter_qq,
+            materials_text=materials_text,
+            image_urls=image_urls,
+            images=images,
+            source=source,
+            draw_data=draw_data if isinstance(draw_data, dict) else None,
+        )
+        submission_id = str(submission["submission_id"])
+
+        # 将文字和图片保存到磁盘
+        local_images = await self._save_submission_files(
+            group_no=group_no,
+            submission_id=submission_id,
+            materials_text=materials_text,
+            images=images,
+        )
+        submission["local_images"] = local_images
+
+        records = self._load_submission_records(group_no)
+        records.append(submission)
+        self._save_submission_records(group_no, records)
+        return submission
+
+    async def _trigger_ai_review(self, event: AstrMessageEvent, group_no: str, submission_id: str):
+        """触发AI审核流程"""
+        try:
+            umo = event.unified_msg_origin
+            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+
+            prompt = (
+                f"有一条新的盲盒任务提交需要审核。\n\n"
+                f"小组序号：{group_no}\n"
+                f"提交编号：{submission_id}\n\n"
+                f"请使用 blindbox_get_submissions 工具查看待审核提交的详细内容，"
+                f"然后根据审核指南进行审核，最后调用 blindbox_review_submission 工具提交审核结果。"
+            )
+
+            llm_resp = await self.context.tool_loop_agent(
+                event=event,
+                chat_provider_id=prov_id,
+                prompt=prompt,
+                system_prompt=self._build_ai_prompt_context(),
+                tools=ToolSet([
+                    BlindboxGetSubmissionsTool(plugin_instance=self),
+                    BlindboxGetPromptTool(plugin_instance=self),
+                    BlindboxReviewSubmissionTool(plugin_instance=self),
+                ]),
+                max_steps=10,
+            )
+
+            completion = llm_resp.completion_text or ""
+
+            # 检测 LLM 返回的底层错误，避免将错误信息当作审核意见发布
+            _error_markers = [
+                "All chat models failed",
+                "BadRequestError",
+                "invalid_request_error",
+                "thinking in the thinking mode must be passed back",
+                "content[].thinking",
+                "ProviderNotFoundError",
+                "AuthenticationError",
+                "RateLimitError",
+            ]
+            if any(marker in completion for marker in _error_markers):
+                await event.send(MessageChain([Plain(
+                    f"[AI 审核失败] 提交编号 {submission_id} 自动审核未能完成。\n"
+                    f"原因：AI 模型服务异常，请管理员手动审核。\n\n"
+                    f"审核通过：/blindbox pass {submission_id}\n"
+                    f"审核拒绝：/blindbox deny {submission_id}"
+                )]))
+                return
+
+            result_msg = (
+                f"[AI 审核] 提交编号 {submission_id} 的审核意见：\n\n"
+                f"{completion}\n\n"
+                f"请管理员确认：/blindbox pass {submission_id} 或 /blindbox deny {submission_id}"
+            )
+            await event.send(MessageChain([Plain(result_msg)]))
+
+        except Exception as e:
+            logger.error("AI审核出错：%s", e, exc_info=True)
 
     def _json_success(self, data: object | None = None):
         """返回成功 JSON"""
