@@ -6,7 +6,27 @@
 > - [GUIDE.md](GUIDE.md) - 日常使用指南（非常容易理解）
 > - [AI_INTEGRATION.md](AI_INTEGRATION.md) - 技术细节（给开发者看）
 
-## 结构
+> **👉 快速导航**：
+> - **[GUIDE.md](GUIDE.md)** - 日常使用指南（新手必读）
+> - **[ARCHITECTURE.md](ARCHITECTURE.md)** - 架构设计和模块化说明（v0.8.0+）
+> - **[CSV_IMPORT_GUIDE.md](CSV_IMPORT_GUIDE.md)** - CSV 数据导入指南
+> - **[AI_INSTRUCTIONS.md](AI_INSTRUCTIONS.md)** - AI 审核工具说明（给 AI 看）
+> - **[CHANGELOG.md](CHANGELOG.md)** - 版本更新记录
+>
+> ℹ️ **已删除的文档**：AI_INTEGRATION.md 和 AI_QUICK_REFERENCE.md 的内容已合并到本文档和 ARCHITECTURE.md
+
+## 📋 快速概览
+
+| 功能 | 说明 |
+|------|------|
+| 🎲 盲盒抽取 | 每周随机抽取任务（显示 3 个选项选一个） |
+| 👥 小组管理 | 创建小组、添加/移除成员、转让组长 |
+| 📝 任务提交 | 提交任务材料（文字+图片），AI 自动审核 |
+| 🤖 AI 审核 | LLM 自动审核提交，管理员确认 |
+| 📊 数据导出 | CSV/ZIP 导出小组和提交记录 |
+| ⚙️ Web 管理 | 25+ API 接口，WebUI 管理界面 |
+
+## 📁 项目结构
 
 - `main.py`: 插件入口，包含 `Star` 子类和抽取指令，任务内容从配置读取。
 - `metadata.yaml`: 插件元数据，AstrBot 会依据它识别插件信息。
