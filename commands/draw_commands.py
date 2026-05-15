@@ -3,6 +3,7 @@
 """
 
 from typing import Any
+from .utils import plain_result_with_tip
 
 from astrbot.api.event import AstrMessageEvent
 
@@ -30,16 +31,16 @@ async def handle_draw(
     try:
         group_id = plugin._get_group_id(event)
         if not plugin._check_group_whitelist(group_id):
-            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            yield plain_result_with_tip(plugin, event, "请在大群抽取盲盒与任务提交~")
             return
     except ValueError:
-        yield event.plain_result("请在大群抽取盲盒与任务提交~")
+        yield plain_result_with_tip(plugin, event, "请在大群抽取盲盒与任务提交~")
         return
 
     sender_id = plugin._get_sender_id(event)
     group_no, group_data = await plugin._find_group_by_member(sender_id)
     if not group_no or not group_data:
-        yield event.plain_result(
+        yield plain_result_with_tip(plugin, event, 
             f"QQ 号 {sender_id} 还没有绑定到任何小组。请先使用 /blindbox group create 或 /blindbox group add。"
         )
         return
@@ -51,7 +52,7 @@ async def handle_draw(
 
     can_draw, reason_msg = plugin._can_draw_again(current_draw, records)
     if not can_draw and not force_redraw:
-        yield event.plain_result(reason_msg)
+        yield plain_result_with_tip(plugin, event, reason_msg)
         return
 
     category = args[0] if args else "全部"
@@ -61,7 +62,7 @@ async def handle_draw(
             group_no, category, force_redraw, actor_qq=sender_id
         )
     except ValueError as exc:
-        yield event.plain_result(str(exc))
+        yield plain_result_with_tip(plugin, event, str(exc))
         return
 
     lines = [
@@ -89,7 +90,7 @@ async def handle_draw(
         "created_at": now(),
     }
 
-    yield event.plain_result("\n".join(lines))
+    yield plain_result_with_tip(plugin, event, "\n".join(lines))
 
 
 async def handle_selection_response(
@@ -131,13 +132,13 @@ async def handle_selection_response(
     created_at = selection_info.get("created_at")
     if created_at and (now() - created_at).total_seconds() > 300:
         del plugin._user_selections[sender_id]
-        yield event.plain_result("选择已过期，请重新抽取。")
+        yield plain_result_with_tip(plugin, event, "选择已过期，请重新抽取。")
         return
 
     try:
         choice = int(choice_text.strip())
         if choice not in {1, 2, 3}:
-            yield event.plain_result("请选择 1、2 或 3")
+            yield plain_result_with_tip(plugin, event, "请选择 1、2 或 3")
             return
     except (ValueError, AttributeError):
         return
@@ -145,7 +146,7 @@ async def handle_selection_response(
     try:
         draw_data = await plugin._confirm_selection(group_no, selection_id, choice, actor_qq=sender_id)
     except ValueError as exc:
-        yield event.plain_result(str(exc))
+        yield plain_result_with_tip(plugin, event, str(exc))
         if sender_id in plugin._user_selections:
             del plugin._user_selections[sender_id]
         return
@@ -168,4 +169,4 @@ async def handle_selection_response(
         "使用 /blindbox submit <任务说明> 来提交任务成果。",
     ]
 
-    yield event.plain_result("\n".join(lines))
+    yield plain_result_with_tip(plugin, event, "\n".join(lines))

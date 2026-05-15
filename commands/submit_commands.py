@@ -4,6 +4,7 @@
 
 import asyncio
 from typing import Any
+from .utils import plain_result_with_tip
 
 from astrbot.api.event import AstrMessageEvent
 
@@ -29,23 +30,23 @@ async def handle_submit(
     try:
         group_id = plugin._get_group_id(event)
         if not plugin._check_group_whitelist(group_id):
-            yield event.plain_result("请在大群抽取盲盒与任务提交~")
+            yield plain_result_with_tip(plugin, event, "请在大群抽取盲盒与任务提交~")
             return
     except ValueError:
-        yield event.plain_result("请在大群抽取盲盒与任务提交~")
+        yield plain_result_with_tip(plugin, event, "请在大群抽取盲盒与任务提交~")
         return
 
     sender_id = plugin._get_sender_id(event)
     group_no, group_data = await plugin._find_group_by_member(sender_id)
     if not group_no or not group_data:
-        yield event.plain_result(f"QQ 号 {sender_id} 还没有绑定到任何小组。")
+        yield plain_result_with_tip(plugin, event, f"QQ 号 {sender_id} 还没有绑定到任何小组。")
         return
 
     _msg_text, image_urls, images = extract_message_text_and_images(event)
     materials_text = " ".join(args).strip() if args else ""
 
     if not materials_text and not images:
-        yield event.plain_result("用法：/blindbox submit <任务说明> [图片]")
+        yield plain_result_with_tip(plugin, event, "用法：/blindbox submit <任务说明> [图片]")
         return
 
     submission = await plugin._create_submission_record(
@@ -61,7 +62,7 @@ async def handle_submit(
     image_count = len(submission.get("local_images", []))
     saved_info = f"，已保存 {image_count} 张图片" if image_count else ""
 
-    yield event.plain_result(
+    yield plain_result_with_tip(plugin, event, 
         "\n".join(
             [
                 "已提交任务材料，等待 AI 审核。",

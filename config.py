@@ -2,12 +2,35 @@
 全局配置、常量和工具函数
 """
 
+import random
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 PLUGIN_NAME = "astrbot_plugin_blindbox"
 KV_STATE_KEY = "blindbox_state"
+
+# 默认提示语列表（可在配置文件中自定义）
+DEFAULT_TIPS = [
+    "💡 /blindbox submit 提交时需要有文字和图片的双重证明~",
+    "💡 每个小组每周只能抽取一次任务，完成后或超时后可重抽",
+    "💡 提交后会自动触发 AI 审核，也可手动使用 pass/deny 审核",
+    "💡 使用 /blindbox me 查看当前任务和小组信息",
+    "💡 任务分类支持简称：智/体/德/美/劳",
+    "💡 完成任务可获得相应积分，积分可兑换奖品哦~",
+    "💡 组长可以管理小组成员，使用 /blindbox group 相关命令",
+    "💡 想重抽任务？使用 /blindbox redraw 强制重抽",
+    "💡 导出提交记录使用 /blindbox export 命令",
+    "💡 有疑问？访问帮助文档：https://ncn6z1dnpw2b.feishu.cn/wiki/JZWXwHM54iwgbfkYVgyc1GPtnOf?from=from_copylink",
+]
+
+
+def get_random_tip(tips_list: list[str] | None = None) -> str:
+    """从 tips 列表中随机选择一条提示语"""
+    tips = tips_list or DEFAULT_TIPS
+    if not tips:
+        return ""
+    return random.choice(tips)
 
 # 默认规则说明
 DEFAULT_RULES_TEXT = (

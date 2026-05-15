@@ -211,6 +211,13 @@ class BlindBoxPlugin(Star):
         """格式化帮助信息"""
         return format_help()
 
+    def _append_tip(self, message: str) -> str:
+        """为消息添加随机提示语"""
+        from .messages import append_tip_to_message
+        
+        tips_config = self.config.get("tips", []) if isinstance(self.config, dict) else []
+        return append_tip_to_message(message, tips_config if tips_config else None)
+
     def _capture_server_url(self) -> None:
         """从 Web 请求中自动检测服务器基址 URL"""
         if self._server_base_url:
@@ -1589,7 +1596,7 @@ class BlindBoxPlugin(Star):
         head = tokens[0].lower()
 
         if head in {"help", "?", "h"}:
-            yield event.plain_result(_format_help())
+            yield event.plain_result(self._append_tip(_format_help()))
             return
 
         if head in {"group", "g"}:
@@ -1631,7 +1638,7 @@ class BlindBoxPlugin(Star):
         if head in {"pass", "approve", "通过"}:
             # 管理员确认通过审核
             if len(tokens) < 2:
-                yield event.plain_result("用法：/blindbox pass <提交编号>")
+                yield event.plain_result(self._append_tip("用法：/blindbox pass <提交编号>"))
                 return
             submission_id = str(tokens[1]).strip()
             async for result in self._confirm_review(event, submission_id, "approved"):
@@ -1641,7 +1648,7 @@ class BlindBoxPlugin(Star):
         if head in {"deny", "reject", "拒绝", "驳回"}:
             # 管理员确认拒绝审核
             if len(tokens) < 2:
-                yield event.plain_result("用法：/blindbox deny <提交编号>")
+                yield event.plain_result(self._append_tip("用法：/blindbox deny <提交编号>"))
                 return
             submission_id = str(tokens[1]).strip()
             async for result in self._confirm_review(event, submission_id, "rejected"):

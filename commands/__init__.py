@@ -7,6 +7,7 @@ from .draw_commands import handle_draw, handle_selection_response
 from .submit_commands import handle_submit
 from .export_commands import handle_export
 from .whoami_commands import handle_whoami
+from .utils import plain_result_with_tip
 
 __all__ = [
     "handle_group_command",
@@ -15,4 +16,5 @@ __all__ = [
     "handle_submit",
     "handle_export",
     "handle_whoami",
+    "plain_result_with_tip",
 ]

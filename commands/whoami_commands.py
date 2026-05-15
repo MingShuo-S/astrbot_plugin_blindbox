@@ -3,6 +3,7 @@
 """
 
 from typing import Any
+from .utils import plain_result_with_tip
 
 from astrbot.api.event import AstrMessageEvent
 
@@ -26,12 +27,12 @@ async def handle_whoami(
     try:
         sender_id = plugin._get_sender_id(event)
     except ValueError:
-        yield event.plain_result("无法识别发送者，请稍后重试。")
+        yield plain_result_with_tip(plugin, event, "无法识别发送者，请稍后重试。")
         return
 
     group_no, group_data = await plugin._find_group_by_member(sender_id)
     if not group_no or not group_data:
-        yield event.plain_result("你当前还没有加入任何小组。")
+        yield plain_result_with_tip(plugin, event, "你当前还没有加入任何小组。")
         return
 
     lines = [
@@ -50,5 +51,21 @@ async def handle_whoami(
                 f"建议积分：{current_draw.get('points', 0)} 分",
             ]
         )
+        
+        # 添加盲盒任务介绍
+        description = str(current_draw.get("description", "")).strip()
+        if description:
+            lines.append(f"任务说明：{description}")
 
-    yield event.plain_result("\n".join(lines))
+    # 添加盲盒系统简介
+    lines.extend([
+        "",
+        "💡 【盲盒任务系统简介】",
+        "• 每周可抽取一次任务，从3个选项中选择1个",
+        "• 选定的任务需在7天内完成并提交材料",
+        "• 提交时需要文字说明+图片证明（双重验证）",
+        "• 完成任务可获得相应积分",
+        "• 使用 /blindbox submit 提交任务材料",
+    ])
+
+    yield plain_result_with_tip(plugin, event, "\n".join(lines))
