@@ -2038,6 +2038,7 @@ class BlindBoxPlugin(Star):
                 "total": len(tasks),
                 "categories": len(categories),
                 "categories_list": sorted(categories),
+                "tasks": tasks,  # 添加任务列表
             }
 
         return await self._api_result(_handler)

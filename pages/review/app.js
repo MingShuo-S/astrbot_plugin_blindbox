@@ -303,21 +303,38 @@ async function findGroupByQQ(qq) {
 // 加载可用任务列表
 async function loadAvailableTasks() {
   try {
+    console.log("开始加载任务列表...");
     const payload = await bridge.apiGet("tasks/stats");
+    console.log("API返回数据:", payload);
+    
     const result = normalizeApiResponse(payload);
-    if (!result.success) return [];
+    console.log("处理后的结果:", result);
+    
+    if (!result.success) {
+      console.error("获取任务列表失败:", result.message || result.error);
+      return [];
+    }
     
     const data = result.data || {};
-    return Array.isArray(data.tasks) ? data.tasks : [];
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    console.log(`成功加载 ${tasks.length} 个任务`);
+    
+    return tasks;
   } catch (error) {
     console.error("加载任务列表失败:", error);
+    showMessage(`加载任务列表失败：${error.message}`, "error");
     return [];
   }
 }
 
 // 更新任务选择器
 function updateTaskSelector(tasks) {
-  if (!taskSelector) return;
+  if (!taskSelector) {
+    console.error("任务选择器元素未找到");
+    return;
+  }
+  
+  console.log(`更新任务选择器，共 ${tasks.length} 个任务`);
   
   taskSelector.innerHTML = '<option value="">-- 从当前任务中选择 --</option>';
   
@@ -330,6 +347,8 @@ function updateTaskSelector(tasks) {
     option.dataset.points = task.points || 0;
     taskSelector.appendChild(option);
   });
+  
+  console.log("任务选择器更新完成");
 }
 
 // 处理任务选择变化
@@ -416,7 +435,8 @@ async function uploadImages(files) {
 
 // 删除提交记录
 async function deleteSubmission(submissionId, groupNo) {
-  const confirmed = window.confirm(`确定要删除提交记录 ${submissionId} 吗？此操作不可恢复！`);
+  // 使用自定义确认对话框（避免sandbox的allow-modals限制）
+  const confirmed = await showCustomConfirm(`确定要删除提交记录 ${submissionId} 吗？此操作不可恢复！`);
   if (!confirmed) return;
   
   setLoading(true);
