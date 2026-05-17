@@ -65,16 +65,13 @@ async def handle_group_command(
             yield plain_result_with_tip(plugin, event, f"序号为 {group_no} 的小组不存在。")
             return
         lines = ["【小组信息】", plugin._build_group_summary(group_no, group_data)]
-        current_draw = draws.get(group_no, {})
-        if isinstance(current_draw, dict) and current_draw.get("week") == week_key():
-            lines.extend(
-                [
-                    "",
-                    "【本周盲盒】",
-                    f"{current_draw.get('category', '')} - {current_draw.get('title', '')}",
-                    f"建议积分：{current_draw.get('points', 0)} 分",
-                ]
-            )
+        task_overview = await plugin._build_current_group_task_overview(group_no)
+        summary_text = str(task_overview.get("summary_text", "")).strip()
+        if summary_text:
+            lines.extend(["", summary_text])
+            block_message = str(task_overview.get("block_message", "")).strip()
+            if block_message and task_overview.get("has_active_draw"):
+                lines.append(f"提醒：{block_message}")
         yield plain_result_with_tip(plugin, event, "\n".join(lines))
         return
 

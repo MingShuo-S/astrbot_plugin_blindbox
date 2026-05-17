@@ -22,8 +22,6 @@ async def handle_whoami(
     Yields:
         消息结果
     """
-    from ..config import week_key
-    
     try:
         sender_id = plugin._get_sender_id(event)
     except ValueError:
@@ -40,22 +38,13 @@ async def handle_whoami(
         plugin._build_group_summary(group_no, group_data),
     ]
 
-    draws = (await plugin._get_state()).get("draws", {})
-    current_draw = draws.get(group_no, {}) if isinstance(draws, dict) else {}
-    if isinstance(current_draw, dict) and current_draw.get("week") == week_key():
-        lines.extend(
-            [
-                "",
-                "【本周盲盒】",
-                f"{current_draw.get('category', '')} - {current_draw.get('title', '')}",
-                f"建议积分：{current_draw.get('points', 0)} 分",
-            ]
-        )
-        
-        # 添加盲盒任务介绍
-        description = str(current_draw.get("description", "")).strip()
-        if description:
-            lines.append(f"任务说明：{description}")
+    task_overview = await plugin._build_current_group_task_overview(group_no)
+    summary_text = str(task_overview.get("summary_text", "")).strip()
+    if summary_text:
+        lines.extend(["", summary_text])
+        block_message = str(task_overview.get("block_message", "")).strip()
+        if block_message and task_overview.get("has_active_draw"):
+            lines.append(f"提醒：{block_message}")
 
     # 添加盲盒系统简介
     lines.extend([

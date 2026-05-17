@@ -9,7 +9,7 @@ import csv
 import json
 import shutil
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -468,6 +468,169 @@ class BlindBoxPlugin(Star):
         """保存状态"""
         async with self._state_lock:
             await self.put_kv_data(KV_STATE_KEY, self._state)
+
+    async def _clear_group_draw(self, group_no: str) -> None:
+        """清除小组当前生效的盲盒任务"""
+        state = await self._get_state()
+        draws = state.get("draws", {})
+        if isinstance(draws, dict) and str(group_no) in draws:
+            draws.pop(str(group_no), None)
+            await self._save_state()
+
+    async def _build_current_group_task_overview(self, group_no: str) -> dict[str, object]:
+        """构建当前小组盲盒任务的状态摘要"""
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        draws = state.get("draws", {})
+
+        if not isinstance(groups, dict) or not isinstance(draws, dict):
+            return {
+                "has_active_draw": False,
+                "block_draw": False,
+                "summary_text": "【当前盲盒任务】状态异常，请稍后重试。",
+            }
+
+        group_data = groups.get(str(group_no))
+        draw_data = draws.get(str(group_no))
+        if not isinstance(group_data, dict) or not isinstance(draw_data, dict):
+            return {
+                "has_active_draw": False,
+                "block_draw": False,
+                "summary_text": "【当前盲盒任务】当前没有进行中的盲盒任务。",
+            }
+
+        drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
+        drawn_at = None
+        if drawn_at_str:
+            try:
+                drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                drawn_at = None
+
+        if drawn_at and (now() - drawn_at) >= timedelta(days=7):
+            await self._clear_group_draw(group_no)
+            return {
+                "has_active_draw": False,
+                "block_draw": False,
+                "summary_text": "【当前盲盒任务】本周任务已满 7 天，已自动清除。",
+            }
+
+        deadline_text = ""
+        remaining_text = "未知"
+        if drawn_at:
+            deadline = drawn_at + timedelta(days=7)
+            deadline_text = deadline.strftime("%Y-%m-%d %H:%M:%S")
+            remaining_seconds = max(0, int((deadline - now()).total_seconds()))
+            remaining_days = remaining_seconds // 86400
+            remaining_hours = (remaining_seconds % 86400) // 3600
+            remaining_text = f"{remaining_days}天{remaining_hours}小时"
+
+        records = self._load_submission_records(group_no)
+        latest_record = None
+        latest_submitted_at = None
+        draw_title = str(draw_data.get("title", "")).strip()
+        draw_category = str(draw_data.get("category", "")).strip()
+        draw_week = str(draw_data.get("week", "")).strip()
+
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("group_no", "")).strip() != str(group_no):
+                continue
+            task_snapshot = record.get("task_snapshot", {})
+            if not isinstance(task_snapshot, dict):
+                continue
+
+            record_title = str(task_snapshot.get("title", "")).strip()
+            record_category = str(task_snapshot.get("category", "")).strip()
+            record_week = str(record.get("week", "")).strip()
+            if record_title != draw_title or record_category != draw_category:
+                continue
+            if draw_week and record_week and record_week != draw_week:
+                continue
+
+            submitted_at_str = str(record.get("submitted_at", "")).strip()
+            submitted_at = None
+            if submitted_at_str:
+                try:
+                    submitted_at = datetime.strptime(submitted_at_str, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    submitted_at = None
+
+            if latest_record is None or (
+                submitted_at is not None
+                and (latest_submitted_at is None or submitted_at > latest_submitted_at)
+            ):
+                latest_record = record
+                latest_submitted_at = submitted_at
+
+        if latest_record is None:
+            lines = [
+                "【当前盲盒任务】",
+                f"状态：尚未提交",
+                f"分类：{draw_data.get('category', '')}",
+                f"任务：{draw_data.get('title', '')}",
+                f"建议积分：{draw_data.get('points', 0)} 分",
+                f"抽取时间：{draw_data.get('drawn_at', '')}",
+                f"截止时间：{deadline_text or '未知'}",
+                f"剩余时间：{remaining_text}",
+            ]
+            if str(draw_data.get("description", "")).strip():
+                lines.append(f"任务说明：{draw_data.get('description', '')}")
+            return {
+                "has_active_draw": True,
+                "block_draw": True,
+                "review_status": "not_submitted",
+                "block_message": "请先完成本周任务",
+                "summary_text": "\n".join(lines),
+            }
+
+        review_status = str(latest_record.get("review_status", "pending")).strip().lower()
+        review_reason = str(latest_record.get("review_reason", "")).strip()
+        reviewer = str(latest_record.get("reviewer", "")).strip()
+        reviewed_at = str(latest_record.get("reviewed_at", "")).strip()
+        submitted_at_text = str(latest_record.get("submitted_at", "")).strip()
+
+        if review_status == "approved":
+            await self._clear_group_draw(group_no)
+            return {
+                "has_active_draw": False,
+                "block_draw": False,
+                "review_status": review_status,
+                "summary_text": "【当前盲盒任务】当前任务已通过审核，已自动清除，可直接抽取下一次盲盒任务。",
+            }
+
+        status_text = "已提交，等待审核" if review_status == "pending" else "审核未通过"
+        block_message = "请@管理员提醒审核" if review_status == "pending" else "审核未通过，可继续完善后重新提交"
+
+        lines = [
+            "【当前盲盒任务】",
+            f"状态：{status_text}",
+            f"审核状态：{review_status}",
+            f"分类：{draw_data.get('category', '')}",
+            f"任务：{draw_data.get('title', '')}",
+            f"建议积分：{draw_data.get('points', 0)} 分",
+            f"抽取时间：{draw_data.get('drawn_at', '')}",
+            f"截止时间：{deadline_text or '未知'}",
+            f"剩余时间：{remaining_text}",
+            f"提交时间：{submitted_at_text or '未知'}",
+        ]
+        if reviewer:
+            lines.append(f"审核人：{reviewer}")
+        if reviewed_at:
+            lines.append(f"审核时间：{reviewed_at}")
+        if review_reason:
+            lines.append(f"审核意见：{review_reason}")
+        if str(draw_data.get("description", "")).strip():
+            lines.append(f"任务说明：{draw_data.get('description', '')}")
+
+        return {
+            "has_active_draw": True,
+            "block_draw": True,
+            "review_status": review_status,
+            "block_message": block_message,
+            "summary_text": "\n".join(lines),
+        }
 
     async def _get_state(self) -> dict[str, object]:
         """获取状态"""
@@ -995,6 +1158,8 @@ class BlindBoxPlugin(Star):
 
             self._save_submission_records(group_no, records)
             await self._save_state()
+            if approved:
+                await self._clear_group_draw(group_no)
             return {
                 "group": group_data,
                 "submission": target_record,
@@ -1625,6 +1790,8 @@ class BlindBoxPlugin(Star):
 
             self._save_submission_records(group_no, records)
             await self._save_state()
+            if approved:
+                await self._clear_group_draw(group_no)
 
             del self._pending_reviews[submission_id]
 
@@ -1679,13 +1846,36 @@ class BlindBoxPlugin(Star):
         # 命令入口：解析 /blindbox 子命令并分发到对应处理器
         raw_message = event.message_str.strip()
         tokens = _strip_root_command(_split_tokens(raw_message))
+        head = tokens[0].lower() if tokens else ""
+
+        is_draw_request = not tokens or head in {"draw", "抽取", "抽奖", "redraw", "reroll", "重抽", "重抽取"}
+        if not is_draw_request and tokens and _normalize_category(tokens[0]) in TASK_CATEGORIES:
+            is_draw_request = True
+
+        if is_draw_request:
+            sender_id = None
+            group_no = None
+            try:
+                sender_id = self._get_sender_id(event)
+                group_no, _ = await self._find_group_by_member(sender_id)
+            except Exception:
+                group_no = None
+
+            if group_no:
+                task_overview = await self._build_current_group_task_overview(group_no)
+                if task_overview.get("has_active_draw") and task_overview.get("block_draw"):
+                    summary_text = str(task_overview.get("summary_text", "")).strip()
+                    block_message = str(task_overview.get("block_message", "")).strip()
+                    message_parts = [summary_text] if summary_text else []
+                    if block_message:
+                        message_parts.append(block_message)
+                    yield event.plain_result(self._append_tip("\n\n".join(message_parts) if message_parts else block_message))
+                    return
 
         if not tokens:
             async for result in handle_draw(self, event, [], force_redraw=False):
                 yield result
             return
-
-        head = tokens[0].lower()
 
         if head in {"help", "?", "h"}:
             yield event.plain_result(self._append_tip(_format_help()))

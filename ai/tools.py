@@ -4,7 +4,7 @@ AI 交互工具定义
 
 from typing import Any
 
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
+from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.agent.run_context import ContextWrapper
 from pydantic import Field
@@ -31,27 +31,25 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> dict | str:
         group_no = str(kwargs.get("group_no", "")).strip()
 
         try:
             if not group_no:
-                return ToolExecResult(error="group_no 不能为空")
+                return {"error": "group_no 不能为空"}
 
             group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
             records = self.plugin_instance._load_submission_records(group_no)
             pending = [r for r in records if r.get("review_status") == "pending"]
 
-            return ToolExecResult(
-                data={
-                    "group_no": group_no,
-                    "group_name": group_data.get("group_name", ""),
-                    "pending_count": len(pending),
-                    "submissions": pending,
-                }
-            )
+            return {
+                "group_no": group_no,
+                "group_name": group_data.get("group_name", ""),
+                "pending_count": len(pending),
+                "submissions": pending,
+            }
         except Exception as e:
-            return ToolExecResult(error=str(e))
+            return {"error": str(e)}
 
 
 @dataclass
@@ -69,12 +67,12 @@ class BlindboxGetPromptTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> dict | str:
         try:
             prompt = self.plugin_instance._build_ai_prompt_context()
-            return ToolExecResult(data={"prompt": prompt})
+            return {"prompt": prompt}
         except Exception as e:
-            return ToolExecResult(error=str(e))
+            return {"error": str(e)}
 
 
 @dataclass
@@ -113,7 +111,7 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> dict | str:
         group_no = str(kwargs.get("group_no", "")).strip()
         submission_id = str(kwargs.get("submission_id", "")).strip()
         verdict = str(kwargs.get("verdict", "")).strip().lower()
@@ -122,9 +120,9 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
 
         try:
             if not group_no:
-                return ToolExecResult(error="group_no 不能为空")
+                return {"error": "group_no 不能为空"}
             if not submission_id:
-                return ToolExecResult(error="submission_id 不能为空")
+                return {"error": "submission_id 不能为空"}
 
             group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
             current_draws = await self.plugin_instance._get_state()
@@ -142,7 +140,7 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
                     break
 
             if target_record is None:
-                return ToolExecResult(error=f"找不到提交记录 {submission_id}")
+                return {"error": f"找不到提交记录 {submission_id}"}
 
             previous_award = int(target_record.get("awarded_points", 0))
             previously_applied = bool(target_record.get("score_applied", False))
@@ -171,14 +169,14 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
 
             self.plugin_instance._save_submission_records(group_no, records)
             await self.plugin_instance._save_state()
+            if approved:
+                await self.plugin_instance._clear_group_draw(group_no)
 
-            return ToolExecResult(
-                data={
-                    "success": True,
-                    "group": group_data,
-                    "submission": target_record,
-                    "approved": approved,
-                }
-            )
+            return {
+                "success": True,
+                "group": group_data,
+                "submission": target_record,
+                "approved": approved,
+            }
         except Exception as e:
-            return ToolExecResult(error=str(e))
+            return {"error": str(e)}
