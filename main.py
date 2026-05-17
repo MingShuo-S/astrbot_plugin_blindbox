@@ -1220,22 +1220,28 @@ class BlindBoxPlugin(Star):
         submission_id = str(record.get("submission_id", "")).strip()
         submission_folder = self._submission_folder(group_no, submission_id)
 
-        for image_url in _parse_qq_list(record.get("image_urls", [])):
-            if image_url:
-                preview_images.append({"type": "remote", "url": image_url, "name": image_url})
+        try:
+            for image_url in _parse_qq_list(record.get("image_urls", [])):
+                if image_url:
+                    preview_images.append({"type": "remote", "url": image_url, "name": image_url})
 
-        for image_name in _parse_qq_list(record.get("local_images", [])):
-            file_path = submission_folder / image_name
-            if not file_path.exists():
-                continue
-            token = await file_token_service.register_file(str(file_path))
-            preview_images.append(
-                {
-                    "type": "local",
-                    "url": f"{self._get_callback_base()}/api/file/{token}",
-                    "name": image_name,
-                }
-            )
+            for image_name in _parse_qq_list(record.get("local_images", [])):
+                file_path = submission_folder / image_name
+                if not file_path.exists():
+                    continue
+                try:
+                    token = await file_token_service.register_file(str(file_path))
+                    preview_images.append(
+                        {
+                            "type": "local",
+                            "url": f"{self._get_callback_base()}/api/file/{token}",
+                            "name": image_name,
+                        }
+                    )
+                except Exception as exc:
+                    logger.warning("注册提交图片预览失败: group=%s submission=%s file=%s error=%s", group_no, submission_id, file_path, exc)
+        except Exception as exc:
+            logger.warning("构建提交图片预览失败: group=%s submission=%s error=%s", group_no, submission_id, exc)
 
         return preview_images
 
@@ -1816,34 +1822,63 @@ class BlindBoxPlugin(Star):
                     continue
 
                 for record in self._load_submission_records(str(current_group_no)):
-                    review_status = self._normalize_review_status(str(record.get("review_status", "pending")))
-                    if status_filter != "all" and review_status != status_filter:
-                        continue
+                    try:
+                        review_status = self._normalize_review_status(str(record.get("review_status", "pending")))
+                        if status_filter != "all" and review_status != status_filter:
+                            continue
 
-                    preview_images: list[dict[str, str]] = []
-                    if with_preview:
-                        preview_images = await self._build_submission_preview_images(str(current_group_no), record)
+                        preview_images: list[dict[str, str]] = []
+                        if with_preview:
+                            preview_images = await self._build_submission_preview_images(str(current_group_no), record)
 
-                    records.append(
-                        {
-                            "group_no": str(current_group_no),
-                            "group_name": str(group_data.get("group_name", "")),
-                            "submission_id": str(record.get("submission_id", "")),
-                            "submitter_qq": str(record.get("submitter_qq", "")),
-                            "submitted_at": str(record.get("submitted_at", "")),
-                            "task_snapshot": record.get("task_snapshot", {}),
-                            "materials_text": str(record.get("materials_text", "")),
-                            "image_urls": _parse_qq_list(record.get("image_urls", [])),
-                            "local_images": _parse_qq_list(record.get("local_images", [])),
-                            "review_status": review_status,
-                            "review_reason": str(record.get("review_reason", "")),
-                            "reviewer": str(record.get("reviewer", "")),
-                            "reviewed_at": str(record.get("reviewed_at", "")),
-                            "awarded_points": int(record.get("awarded_points", 0)),
-                            "score_applied": bool(record.get("score_applied", False)),
-                            "attachments": preview_images,
-                        }
-                    )
+                        records.append(
+                            {
+                                "group_no": str(current_group_no),
+                                "group_name": str(group_data.get("group_name", "")),
+                                "submission_id": str(record.get("submission_id", "")),
+                                "submitter_qq": str(record.get("submitter_qq", "")),
+                                "submitted_at": str(record.get("submitted_at", "")),
+                                "task_snapshot": record.get("task_snapshot", {}),
+                                "materials_text": str(record.get("materials_text", "")),
+                                "image_urls": _parse_qq_list(record.get("image_urls", [])),
+                                "local_images": _parse_qq_list(record.get("local_images", [])),
+                                "review_status": review_status,
+                                "review_reason": str(record.get("review_reason", "")),
+                                "reviewer": str(record.get("reviewer", "")),
+                                "reviewed_at": str(record.get("reviewed_at", "")),
+                                "awarded_points": int(record.get("awarded_points", 0)),
+                                "score_applied": bool(record.get("score_applied", False)),
+                                "attachments": preview_images,
+                            }
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "整理提交记录失败: group=%s submission=%s error=%s",
+                            current_group_no,
+                            record.get("submission_id", ""),
+                            exc,
+                        )
+                        records.append(
+                            {
+                                "group_no": str(current_group_no),
+                                "group_name": str(group_data.get("group_name", "")),
+                                "submission_id": str(record.get("submission_id", "")),
+                                "submitter_qq": str(record.get("submitter_qq", "")),
+                                "submitted_at": str(record.get("submitted_at", "")),
+                                "task_snapshot": record.get("task_snapshot", {}),
+                                "materials_text": str(record.get("materials_text", "")),
+                                "image_urls": _parse_qq_list(record.get("image_urls", [])),
+                                "local_images": _parse_qq_list(record.get("local_images", [])),
+                                "review_status": self._normalize_review_status(str(record.get("review_status", "pending"))),
+                                "review_reason": str(record.get("review_reason", "")),
+                                "reviewer": str(record.get("reviewer", "")),
+                                "reviewed_at": str(record.get("reviewed_at", "")),
+                                "awarded_points": int(record.get("awarded_points", 0)),
+                                "score_applied": bool(record.get("score_applied", False)),
+                                "attachments": [],
+                                "preview_error": str(exc),
+                            }
+                        )
 
             records.sort(key=lambda item: (str(item.get("submitted_at", "")), str(item.get("submission_id", ""))), reverse=True)
             pending_count = sum(1 for item in records if item.get("review_status") == "pending")
