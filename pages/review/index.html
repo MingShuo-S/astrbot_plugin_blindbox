@@ -37,6 +37,59 @@
       <main class="grid">
         <section class="panel panel--wide">
           <div class="panel-head">
+            <h2>手动新增提交记录</h2>
+            <span class="subtle">用于补录丢失的提交与审核状态</span>
+          </div>
+          <form id="manualCreateForm" class="manual-form">
+            <label>
+              <span>组序号</span>
+              <input name="group_no" placeholder="例如 1" required />
+            </label>
+            <label>
+              <span>提交人 QQ</span>
+              <input name="submitter_qq" placeholder="例如 123456789" required />
+            </label>
+            <label class="full">
+              <span>提交文字</span>
+              <textarea name="materials_text" rows="4" placeholder="手动补录的提交说明"></textarea>
+            </label>
+            <label>
+              <span>任务分类</span>
+              <input name="task_category" placeholder="例如 【以智增慧】" />
+            </label>
+            <label>
+              <span>任务标题</span>
+              <input name="task_title" placeholder="例如 技能交换五分钟" />
+            </label>
+            <label>
+              <span>任务积分</span>
+              <input name="task_points" type="number" step="1" placeholder="3" />
+            </label>
+            <label>
+              <span>审核状态</span>
+              <select name="review_status">
+                <option value="pending">未审核</option>
+                <option value="approved">已通过</option>
+                <option value="rejected">已拒绝</option>
+              </select>
+            </label>
+            <label class="full">
+              <span>图片链接</span>
+              <textarea name="image_urls" rows="2" placeholder="多个链接可用空格、逗号或换行分隔"></textarea>
+            </label>
+            <label class="full">
+              <span>审核备注</span>
+              <textarea name="review_reason" rows="2" placeholder="可填写补录说明或审核备注"></textarea>
+            </label>
+            <div class="full actions-row">
+              <button type="submit">手动新增记录</button>
+              <span class="hint">如果状态选“已通过”，会自动把任务积分记到小组积分里。</span>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel panel--wide">
+          <div class="panel-head">
             <h2>全部提交记录</h2>
           </div>
           <div id="message" class="message"></div>

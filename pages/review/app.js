@@ -7,6 +7,7 @@ const exportAllBtn = document.getElementById("exportAllBtn");
 const exportApprovedBtn = document.getElementById("exportApprovedBtn");
 const filterSelect = document.getElementById("filterSelect");
 const recordsContainer = document.getElementById("reviews-container");
+const manualCreateForm = document.getElementById("manualCreateForm");
 
 let pageContext = null;
 let reviewRecords = [];
@@ -251,6 +252,13 @@ function renderRecords() {
   });
 }
 
+function parseTokenList(raw) {
+  return String(raw || "")
+    .split(/[\s,，;；\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function setLoading(isLoading) {
   refreshBtn.disabled = isLoading;
   filterSelect.disabled = isLoading;
@@ -319,6 +327,39 @@ async function updateReview(submissionId, verdict, groupNo) {
   }
 }
 
+async function createManualRecord(formData) {
+  setLoading(true);
+  try {
+    const payload = {
+      group_no: String(formData.get("group_no") || "").trim(),
+      submitter_qq: String(formData.get("submitter_qq") || "").trim(),
+      materials_text: String(formData.get("materials_text") || "").trim(),
+      task_category: String(formData.get("task_category") || "").trim(),
+      task_title: String(formData.get("task_title") || "").trim(),
+      task_points: String(formData.get("task_points") || "").trim(),
+      review_status: String(formData.get("review_status") || "pending").trim(),
+      image_urls: parseTokenList(String(formData.get("image_urls") || "")),
+      review_reason: String(formData.get("review_reason") || "").trim(),
+      reviewer: pageContext?.displayName || pageContext?.pluginName || "admin",
+    };
+
+    const payloadResult = await bridge.apiPost("review/create", payload);
+    const result = normalizeApiResponse(payloadResult);
+    if (!result.success) {
+      throw new Error(result.message || result.error || "新增失败");
+    }
+
+    showMessage(`已新增提交记录 ${result.data?.submission?.submission_id || ""}`, "ok");
+    manualCreateForm.reset();
+    await loadRecords();
+  } catch (error) {
+    console.error("Error creating manual record:", error);
+    showMessage(`新增出错：${error.message}`, "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function exportCsv(status) {
   setLoading(true);
   try {
@@ -361,6 +402,13 @@ function bindEvents() {
   filterSelect.addEventListener("change", () => loadRecords());
   exportAllBtn.addEventListener("click", () => exportCsv("all"));
   exportApprovedBtn.addEventListener("click", () => exportCsv("approved"));
+  if (manualCreateForm) {
+    manualCreateForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(manualCreateForm);
+      await createManualRecord(formData);
+    });
+  }
 }
 
 async function init() {

@@ -36,12 +36,17 @@ function summarizeState(data) {
     const list = Array.isArray(group.members) ? group.members.length : 0;
     return count + list;
   }, 0);
+  const totalScore = Object.values(data.groups || {}).reduce((count, group) => {
+    const score = Number(group.score_total || 0);
+    return count + (Number.isFinite(score) ? score : 0);
+  }, 0);
   const draws = Object.keys(data.draws || {}).length;
   const requested = Object.values(data.groups || {}).filter((group) => group.dissolve_requested).length;
 
   return [
     { value: String(groups), label: "小组总数" },
     { value: String(members), label: "成员总数" },
+    { value: String(totalScore), label: "累计积分" },
     { value: String(draws), label: "本周已抽" },
     { value: String(requested), label: "申请解散" },
   ];
@@ -130,6 +135,7 @@ function renderGroups(data) {
     .map((group) => {
       const members = Array.isArray(group.members) ? group.members : [];
       const leader = group.leader_qq || members[0] || "未设置";
+      const scoreTotal = Number(group.score_total || 0);
       const requestBadge = group.dissolve_requested ? '<span class="group-badge warn">已申请解散</span>' : "";
       const membersText = members.length ? members.join("、") : "无";
       const transferDisabled = members.length ? "" : "disabled";
@@ -144,8 +150,14 @@ function renderGroups(data) {
             <div>
               <h3 class="group-name">${escapeText(group.group_name)} </h3>
               <div class="group-meta">序号：${escapeText(group.group_no)} ｜ 组长：${escapeText(leader)} ｜ 成员数：${members.length}</div>
+              <div class="group-score">当前积分：<strong>${escapeText(Number.isFinite(scoreTotal) ? scoreTotal : 0)}</strong></div>
             </div>
             ${requestBadge}
+          </div>
+
+          <div class="inline-form">
+            <input data-score-input type="text" value="${escapeText(Number.isFinite(scoreTotal) ? scoreTotal : 0)}" placeholder="输入新积分或 +3 / -2" />
+            <button class="ghost" data-action="score-save">保存积分</button>
           </div>
 
           <div class="inline-form">
@@ -193,6 +205,7 @@ function renderGroups(data) {
       const removeInput = card.querySelector("[data-remove-input]");
       const transferSelect = card.querySelector("[data-transfer-select]");
       const renameInput = card.querySelector("[data-rename-input]");
+      const scoreInput = card.querySelector("[data-score-input]");
 
       try {
         if (action === "add") {
@@ -221,6 +234,12 @@ function renderGroups(data) {
           }
           await callApi("group/rename", { group_no: groupNo, new_group_name: newGroupName });
           renameInput.value = "";
+        } else if (action === "score-save") {
+          const newScore = String(scoreInput.value || "").trim();
+          if (!newScore) {
+            throw new Error("积分不能为空");
+          }
+          await callApi("group/set-score", { group_no: groupNo, score_total: newScore });
         } else if (action === "export") {
           const result = await callApi("group/export-submissions", { group_no: groupNo });
           downloadJson(`blindbox-group-${groupNo}-submissions.json`, result);

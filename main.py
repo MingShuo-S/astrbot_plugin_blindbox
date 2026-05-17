@@ -134,6 +134,14 @@ def _normalize_tasks(raw_tasks: object) -> list[dict[str, object]]:
     return storage_ops.normalize_tasks(raw_tasks)
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    """安全转换为整数"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_help() -> str:
     """格式化帮助信息"""
     return format_help()
@@ -313,6 +321,7 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/request-dissolve", self.api_group_request_dissolve, ["POST"], "申请解散小组")
         context.register_web_api(f"/{PLUGIN_NAME}/group/cancel-dissolve", self.api_group_cancel_dissolve, ["POST"], "取消解散申请")
         context.register_web_api(f"/{PLUGIN_NAME}/group/dissolve", self.api_group_dissolve, ["POST"], "解散小组")
+        context.register_web_api(f"/{PLUGIN_NAME}/group/set-score", self.api_group_set_score, ["POST"], "设置小组积分")
         context.register_web_api(f"/{PLUGIN_NAME}/group/redraw", self.api_group_redraw, ["POST"], "重抽小组任务")
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
@@ -327,6 +336,7 @@ class BlindBoxPlugin(Star):
 
         # Review 页面 API
         context.register_web_api(f"/{PLUGIN_NAME}/review/records", self.api_review_records, ["GET"], "获取全部提交记录")
+        context.register_web_api(f"/{PLUGIN_NAME}/review/create", self.api_review_create, ["POST"], "手动新增提交记录")
         context.register_web_api(f"/{PLUGIN_NAME}/review/update", self.api_review_update, ["POST"], "更新提交审核状态")
         context.register_web_api(f"/{PLUGIN_NAME}/review/export-csv", self.api_review_export_csv, ["GET", "POST"], "导出提交记录 CSV")
 
@@ -1567,6 +1577,44 @@ class BlindBoxPlugin(Star):
 
         return await self._api_result(_handler)
 
+    async def api_group_set_score(self):
+        """设置小组积分"""
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+        score_value_raw = str(payload.get("score_total", "")).strip()
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+            if not score_value_raw:
+                raise ValueError("score_total 不能为空。")
+
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            if not isinstance(groups, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                raise ValueError(f"序号为 {group_no} 的小组不存在。")
+
+            current_score = _safe_int(group_data.get("score_total", 0))
+            if score_value_raw.startswith(("+", "-")):
+                new_score = current_score + _safe_int(score_value_raw, 0)
+            else:
+                new_score = _safe_int(score_value_raw, current_score)
+
+            group_data["score_total"] = max(0, new_score)
+            await self._save_state()
+            return {
+                "group_no": group_no,
+                "group_name": str(group_data.get("group_name", "")),
+                "previous_score_total": current_score,
+                "score_total": group_data["score_total"],
+            }
+
+        return await self._api_result(_handler)
+
     async def api_group_redraw(self):
         """小组重抽任务"""
         payload = await self._get_request_json()
@@ -1953,7 +2001,7 @@ class BlindBoxPlugin(Star):
                                 "review_reason": str(record.get("review_reason", "")),
                                 "reviewer": str(record.get("reviewer", "")),
                                 "reviewed_at": str(record.get("reviewed_at", "")),
-                                "awarded_points": int(record.get("awarded_points", 0)),
+                                "awarded_points": _safe_int(record.get("awarded_points", 0)),
                                 "score_applied": bool(record.get("score_applied", False)),
                                 "attachments": preview_images,
                             }
@@ -1980,7 +2028,7 @@ class BlindBoxPlugin(Star):
                                 "review_reason": str(record.get("review_reason", "")),
                                 "reviewer": str(record.get("reviewer", "")),
                                 "reviewed_at": str(record.get("reviewed_at", "")),
-                                "awarded_points": int(record.get("awarded_points", 0)),
+                                "awarded_points": _safe_int(record.get("awarded_points", 0)),
                                 "score_applied": bool(record.get("score_applied", False)),
                                 "attachments": [],
                                 "preview_error": str(exc),
@@ -2018,6 +2066,87 @@ class BlindBoxPlugin(Star):
                 reviewer=reviewer,
                 group_no=group_no,
             )
+
+        return await self._api_result(_handler)
+
+    async def api_review_create(self):
+        """手动新增提交记录"""
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+        submitter_qq = str(payload.get("submitter_qq", "")).strip()
+        materials_text = str(payload.get("materials_text", "")).strip()
+        image_urls = _parse_qq_list(payload.get("image_urls", []))
+        review_status = self._normalize_review_status(str(payload.get("review_status", "pending")))
+        review_reason = str(payload.get("review_reason", "")).strip()
+        reviewer = str(payload.get("reviewer", "admin")).strip() or "admin"
+        submitted_at = str(payload.get("submitted_at", "")).strip()
+        task_category = str(payload.get("task_category", "")).strip()
+        task_title = str(payload.get("task_title", "")).strip()
+        task_points_raw = payload.get("task_points", "")
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+            if not submitter_qq:
+                raise ValueError("submitter_qq 不能为空。")
+
+            group_data = await self._ensure_group_or_raise(group_no)
+            if not self._group_has_member(group_data, submitter_qq):
+                raise ValueError("提交人必须是本组成员。")
+
+            state = await self._get_state()
+            draw_data = None
+            if isinstance(state.get("draws", {}), dict):
+                draw_data = state.get("draws", {}).get(group_no)
+
+            task_snapshot = dict(draw_data) if isinstance(draw_data, dict) else {}
+            if task_category:
+                task_snapshot["category"] = task_category
+            if task_title:
+                task_snapshot["title"] = task_title
+            if str(task_points_raw).strip():
+                task_snapshot["points"] = _safe_int(task_points_raw, 0)
+
+            from .business.submission import build_submission_record
+
+            submission = build_submission_record(
+                group_no=group_no,
+                group_data=group_data,
+                submitter_qq=submitter_qq,
+                materials_text=materials_text,
+                image_urls=image_urls,
+                images=[],
+                source=str(payload.get("source", "manual")),
+                draw_data=task_snapshot,
+            )
+            if submitted_at:
+                submission["submitted_at"] = submitted_at
+
+            applied_points = _safe_int(task_snapshot.get("points", 0)) if review_status == "approved" else 0
+            submission.update(
+                {
+                    "review_status": review_status,
+                    "review_reason": review_reason,
+                    "reviewer": reviewer,
+                    "reviewed_at": timestamp(),
+                    "awarded_points": applied_points,
+                    "score_applied": bool(applied_points),
+                }
+            )
+
+            if review_status == "approved":
+                group_data["score_total"] = _safe_int(group_data.get("score_total", 0)) + applied_points
+
+            records = self._load_submission_records(group_no)
+            records.append(submission)
+            self._save_submission_records(group_no, records)
+            await self._save_state()
+
+            return {
+                "group_no": group_no,
+                "group_name": str(group_data.get("group_name", "")),
+                "submission": submission,
+            }
 
         return await self._api_result(_handler)
 
@@ -2087,7 +2216,7 @@ class BlindBoxPlugin(Star):
                             "review_reason": str(record.get("review_reason", "")),
                             "reviewer": str(record.get("reviewer", "")),
                             "reviewed_at": str(record.get("reviewed_at", "")),
-                            "awarded_points": int(record.get("awarded_points", 0)),
+                            "awarded_points": _safe_int(record.get("awarded_points", 0)),
                             "score_applied": "1" if bool(record.get("score_applied", False)) else "0",
                         }
                     )

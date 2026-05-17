@@ -258,6 +258,16 @@ textarea {
   font-size: 1.1rem;
 }
 
+.group-score {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
+.group-score strong {
+  color: var(--text);
+}
+
 .group-meta,
 .group-members,
 .group-draw {
@@ -288,6 +298,10 @@ textarea {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
+}
+
+.inline-form input[type="number"] {
+  min-width: 0;
 }
 
 .inline-form--wide {
@@ -378,6 +392,10 @@ textarea {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-form {
     grid-template-columns: 1fr;
   }
 

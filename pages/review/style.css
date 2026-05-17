@@ -201,6 +201,54 @@ select {
   font-size: 18px;
 }
 
+.manual-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.manual-form label {
+  display: grid;
+  gap: 8px;
+}
+
+.manual-form label span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6d7b92;
+}
+
+.manual-form input,
+.manual-form textarea,
+.manual-form select {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 37, 68, 0.08);
+  background: #f7f9fc;
+  padding: 12px 14px;
+  color: #162338;
+  font: inherit;
+  outline: none;
+}
+
+.manual-form input:focus,
+.manual-form textarea:focus,
+.manual-form select:focus {
+  border-color: rgba(44, 98, 168, 0.55);
+  box-shadow: 0 0 0 4px rgba(44, 98, 168, 0.12);
+}
+
+.manual-form textarea {
+  resize: vertical;
+}
+
+.manual-form .full {
+  grid-column: 1 / -1;
+}
+
 .message {
   display: none;
   margin-bottom: 18px;
@@ -508,5 +556,9 @@ select {
 
   .review-card__actions .btn {
     width: 100%;
+  }
+
+  .manual-form {
+    grid-template-columns: 1fr;
   }
 }
