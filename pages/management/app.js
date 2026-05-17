@@ -5,6 +5,7 @@ const messageEl = document.getElementById("message");
 const statusBadge = document.getElementById("statusBadge");
 const refreshBtn = document.getElementById("refreshBtn");
 const debugStateBtn = document.getElementById("debugStateBtn");
+const healthCheckBtn = document.getElementById("healthCheckBtn");
 const createForm = document.getElementById("createForm");
 const exportAllBtn = document.getElementById("exportAllBtn");
 const debugStateOutput = document.getElementById("debugStateOutput");
@@ -245,7 +246,29 @@ function renderDebugState(payload) {
     return;
   }
 
-  debugStateOutput.textContent = JSON.stringify(payload, null, 2);
+  const rawState = payload?.raw_state;
+  const normalizedState = payload?.normalized_state;
+  const report = Array.isArray(payload?.report) ? payload.report : [];
+  const groups = rawState && typeof rawState.groups === "object" ? Object.keys(rawState.groups).length : 0;
+  const draws = rawState && typeof rawState.draws === "object" ? Object.keys(rawState.draws).length : 0;
+  const tasks = Array.isArray(rawState?.tasks) ? rawState.tasks.length : 0;
+  const warnings = report.filter((item) => item && item.level === "warn").length;
+  const errors = report.filter((item) => item && item.level === "error").length;
+
+  const lines = [
+    `原始状态：小组 ${groups} 个，抽取 ${draws} 条，任务 ${tasks} 条`,
+    `规范化状态：小组 ${Object.keys(normalizedState?.groups || {}).length} 个，抽取 ${Object.keys(normalizedState?.draws || {}).length} 条`,
+    `告警：${warnings}，错误：${errors}`,
+  ];
+
+  if (report.length) {
+    lines.push("", "诊断明细：");
+    for (const item of report) {
+      lines.push(`[${item.level || "info"}] ${item.message || ""}`);
+    }
+  }
+
+  debugStateOutput.textContent = lines.join("\n");
 }
 
 // 全部导出
@@ -379,6 +402,45 @@ async function loadDebugState() {
   }
 }
 
+async function checkBackendHealth() {
+  if (!debugStateOutput) {
+    return;
+  }
+
+  debugStateOutput.textContent = "检测中...";
+  const checks = [
+    ["state", {}],
+    ["review/records", { with_preview: "0" }],
+    ["debug/state", {}],
+  ];
+  const lines = [];
+
+  for (const [endpoint, params] of checks) {
+    try {
+      const payload = await bridge.apiGet(endpoint, params);
+      const result = normalizeApiResponse(payload);
+      if (result.success) {
+        const data = result.data;
+        let extra = "";
+        if (endpoint === "state") {
+          extra = `groups=${Object.keys(data?.groups || {}).length}, draws=${Object.keys(data?.draws || {}).length}, tasks=${Array.isArray(data?.tasks) ? data.tasks.length : 0}`;
+        } else if (endpoint === "review/records") {
+          extra = `records=${data?.total ?? 0}, pending=${data?.pending_count ?? 0}`;
+        } else if (endpoint === "debug/state") {
+          extra = `report=${Array.isArray(data?.report) ? data.report.length : 0}`;
+        }
+        lines.push(`✅ ${endpoint} 可用 ${extra}`.trim());
+      } else {
+        lines.push(`⚠️ ${endpoint} 返回业务错误：${result.message || "未知错误"}`);
+      }
+    } catch (error) {
+      lines.push(`❌ ${endpoint} 不可用：${error.message || String(error)}`);
+    }
+  }
+
+  debugStateOutput.textContent = lines.join("\n");
+}
+
 createForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -407,6 +469,12 @@ refreshBtn.addEventListener("click", async () => {
 if (debugStateBtn) {
   debugStateBtn.addEventListener("click", async () => {
     await loadDebugState();
+  });
+}
+
+if (healthCheckBtn) {
+  healthCheckBtn.addEventListener("click", async () => {
+    await checkBackendHealth();
   });
 }
 

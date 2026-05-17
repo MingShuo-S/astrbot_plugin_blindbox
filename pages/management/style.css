@@ -315,7 +315,7 @@ textarea {
 .debug-output {
   margin: 0;
   padding: 18px;
-  min-height: 220px;
+  min-height: 160px;
   max-height: 520px;
   overflow: auto;
   border-radius: 18px;

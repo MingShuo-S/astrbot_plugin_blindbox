@@ -1020,6 +1020,23 @@ class BlindBoxPlugin(Star):
             payload["data"] = data
         return jsonify(payload)
 
+    async def _api_result(self, handler):
+        """统一包装 Web API 结果"""
+        try:
+            result = await handler()
+            return self._json_success(result if result is not None else {})
+        except ValueError as exc:
+            return self._json_error(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("blindbox api error")
+            return self._json_error(
+                f"内部错误：{exc}",
+                {
+                    "error_type": type(exc).__name__,
+                    "traceback": traceback.format_exc(),
+                },
+            )
+
     async def _get_request_json(self) -> dict[str, object]:
         """获取请求 JSON"""
         payload = await request.get_json(silent=True)
