@@ -4,8 +4,10 @@ const statsEl = document.getElementById("stats");
 const messageEl = document.getElementById("message");
 const statusBadge = document.getElementById("statusBadge");
 const refreshBtn = document.getElementById("refreshBtn");
+const debugStateBtn = document.getElementById("debugStateBtn");
 const createForm = document.getElementById("createForm");
 const exportAllBtn = document.getElementById("exportAllBtn");
+const debugStateOutput = document.getElementById("debugStateOutput");
 
 let pageContext = null;
 let state = null;
@@ -238,6 +240,14 @@ function renderGroups(data) {
   });
 }
 
+function renderDebugState(payload) {
+  if (!debugStateOutput) {
+    return;
+  }
+
+  debugStateOutput.textContent = JSON.stringify(payload, null, 2);
+}
+
 // 全部导出
 if (exportAllBtn) {
   exportAllBtn.addEventListener("click", async () => {
@@ -349,6 +359,26 @@ async function loadState() {
   setStatus("在线", "ok");
 }
 
+async function loadDebugState() {
+  if (!debugStateOutput) {
+    return;
+  }
+
+  debugStateOutput.textContent = "加载中...";
+  try {
+    const payload = await bridge.apiGet("debug/state");
+    const result = normalizeApiResponse(payload);
+    if (!result.success) {
+      throw new Error(result.message || "无法加载诊断信息");
+    }
+    renderDebugState(result.data);
+    showMessage("诊断信息已加载。", "ok");
+  } catch (error) {
+    debugStateOutput.textContent = error.message || String(error);
+    showMessage(error.message || String(error), "err");
+  }
+}
+
 createForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -373,6 +403,12 @@ refreshBtn.addEventListener("click", async () => {
     showMessage(error.message || String(error), "err");
   }
 });
+
+if (debugStateBtn) {
+  debugStateBtn.addEventListener("click", async () => {
+    await loadDebugState();
+  });
+}
 
 (async () => {
   try {

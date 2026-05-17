@@ -290,6 +290,7 @@ class BlindBoxPlugin(Star):
         """注册 Web API 接口"""
         # 基础 API
         context.register_web_api(f"/{PLUGIN_NAME}/state", self.api_state, ["GET"], "BlindBox 状态")
+        context.register_web_api(f"/{PLUGIN_NAME}/debug/state", self.api_debug_state, ["GET"], "BlindBox 状态诊断")
         context.register_web_api(f"/{PLUGIN_NAME}/test", self.api_test, ["GET", "OPTIONS"], "测试API连接")
 
         # AI 相关 API
@@ -1054,6 +1055,54 @@ class BlindBoxPlugin(Star):
                 "categories": _task_categories(tasks),
                 "groups": state.get("groups", {}),
                 "draws": state.get("draws", {}),
+            }
+
+        return await self._api_result(_handler)
+
+    async def api_debug_state(self):
+        """获取原始状态与诊断信息"""
+        async def _handler():
+            raw_state = await self.get_kv_data(KV_STATE_KEY, None)
+            normalized_state = _normalize_state(raw_state if isinstance(raw_state, dict) else None)
+
+            report: list[dict[str, object]] = []
+            if not isinstance(raw_state, dict):
+                report.append({"level": "warn", "message": "KV 状态不是 dict，已按默认状态处理。"})
+            else:
+                groups = raw_state.get("groups", {})
+                draws = raw_state.get("draws", {})
+                pending = raw_state.get("pending_selections", {})
+                tasks = raw_state.get("tasks", [])
+                report.append({"level": "info", "message": f"raw.groups 类型：{type(groups).__name__}"})
+                report.append({"level": "info", "message": f"raw.draws 类型：{type(draws).__name__}"})
+                report.append({"level": "info", "message": f"raw.pending_selections 类型：{type(pending).__name__}"})
+                report.append({"level": "info", "message": f"raw.tasks 类型：{type(tasks).__name__}"})
+
+                if isinstance(groups, dict):
+                    for group_no, group_data in groups.items():
+                        if not isinstance(group_data, dict):
+                            report.append({"level": "warn", "message": f"小组 {group_no} 数据不是 dict。"})
+                            continue
+                        score_total = group_data.get("score_total", 0)
+                        if not isinstance(score_total, int):
+                            report.append({"level": "warn", "message": f"小组 {group_no} 的 score_total 不是整数：{score_total!r}"})
+
+                if isinstance(draws, dict):
+                    for group_no, draw_data in draws.items():
+                        if not isinstance(draw_data, dict):
+                            report.append({"level": "warn", "message": f"盲盒 {group_no} 数据不是 dict。"})
+                            continue
+                        draw_count = draw_data.get("draw_count", 0)
+                        points = draw_data.get("points", 0)
+                        if not isinstance(draw_count, int):
+                            report.append({"level": "warn", "message": f"盲盒 {group_no} 的 draw_count 不是整数：{draw_count!r}"})
+                        if not isinstance(points, int):
+                            report.append({"level": "warn", "message": f"盲盒 {group_no} 的 points 不是整数：{points!r}"})
+
+            return {
+                "raw_state": raw_state,
+                "normalized_state": normalized_state,
+                "report": report,
             }
 
         return await self._api_result(_handler)

@@ -97,8 +97,8 @@ function renderAttachments(record) {
           .map((item) => {
             if (item.url) {
               return `
-                <a class="attachment-card" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">
-                  <img src="${escapeHtml(item.url)}" alt="提交图片" loading="lazy" />
+                <a class="attachment-card attachment-card--link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">
+                  <div class="attachment-placeholder">点击查看图片</div>
                   <span>${escapeHtml(item.name || "图片")}</span>
                 </a>
               `;
@@ -263,7 +263,7 @@ async function loadRecords() {
   try {
     const payload = await bridge.apiGet("review/records", {
       status: filterSelect.value,
-      with_preview: "1",
+      with_preview: "0",
     });
     const result = normalizeApiResponse(payload);
 

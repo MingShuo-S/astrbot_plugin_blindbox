@@ -304,6 +304,30 @@ textarea {
   gap: 10px;
 }
 
+.hero-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 18px;
+}
+
+.debug-output {
+  margin: 0;
+  padding: 18px;
+  min-height: 220px;
+  max-height: 520px;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 0.88rem;
+}
+
 .footer {
   display: flex;
   justify-content: space-between;

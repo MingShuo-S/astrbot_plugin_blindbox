@@ -132,6 +132,12 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
 
     from ..config import batch_id, week_key
 
+    def safe_int(value: object, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     if not isinstance(raw_state, dict):
         return default_state()
 
@@ -163,7 +169,7 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
                 "leader_qq": leader,
                 "members": members,
                 "dissolve_requested": bool(group_data.get("dissolve_requested", False)),
-                "score_total": int(group_data.get("score_total", 0)),
+                "score_total": safe_int(group_data.get("score_total", 0)),
             }
             normalized_groups[str(group_no)] = normalized_group
             for member_id in members:
@@ -179,7 +185,7 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
             if last_batch and last_batch != current_batch:
                 draw_count = 0
             else:
-                draw_count = int(draw_data.get("draw_count", 0))
+                draw_count = safe_int(draw_data.get("draw_count", 0))
             normalized_draws[str(group_no)] = {
                 "week": str(draw_data.get("week", "")),
                 "batch_id": current_batch,
@@ -188,7 +194,7 @@ def normalize_state(raw_state: dict[str, object] | None) -> dict[str, object]:
                 "group_name": str(draw_data.get("group_name", "")),
                 "category": str(draw_data.get("category", "")),
                 "title": str(draw_data.get("title", "")),
-                "points": int(draw_data.get("points", 0)),
+                "points": safe_int(draw_data.get("points", 0)),
                 "drawn_at": str(draw_data.get("drawn_at", "")),
             }
             if "description" in draw_data:

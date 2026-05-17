@@ -19,6 +19,7 @@
           <div id="stats" class="stats"></div>
           <div class="hero-card-actions">
             <button id="exportAllBtn" class="secondary">全部导出</button>
+            <button id="debugStateBtn" class="secondary">查看诊断</button>
             <span class="hint">导入请在插件配置中编辑 `groups_json` / `tasks` 或使用 `tasks_csv_text`。</span>
           </div>
         </div>
@@ -56,6 +57,14 @@
             <span id="statusBadge" class="badge">加载中</span>
           </div>
           <div id="groups" class="groups"></div>
+        </section>
+
+        <section class="panel panel--wide">
+          <div class="panel-head">
+            <h2>状态诊断</h2>
+            <span class="hint">仅用于排查 KV / 规范化状态问题</span>
+          </div>
+          <pre id="debugStateOutput" class="debug-output">点击“查看诊断”后显示结果。</pre>
         </section>
       </main>
 
