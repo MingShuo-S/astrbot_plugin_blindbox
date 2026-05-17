@@ -11,6 +11,21 @@ const recordsContainer = document.getElementById("reviews-container");
 let pageContext = null;
 let reviewRecords = [];
 
+async function getBridge() {
+  if (window.AstrBotPluginPage) {
+    return window.AstrBotPluginPage;
+  }
+
+  for (let index = 0; index < 40; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (window.AstrBotPluginPage) {
+      return window.AstrBotPluginPage;
+    }
+  }
+
+  throw new Error("AstrBot 插件页 bridge 尚未就绪");
+}
+
 function showMessage(text, type = "ok") {
   messageEl.textContent = text;
   messageEl.className = `message ${type}`;
@@ -350,7 +365,8 @@ function bindEvents() {
 
 async function init() {
   try {
-    pageContext = await bridge.ready();
+    const bridgeApi = await getBridge();
+    pageContext = await bridgeApi.ready();
     bindEvents();
     await loadRecords();
   } catch (error) {
