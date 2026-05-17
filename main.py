@@ -207,6 +207,10 @@ class BlindBoxPlugin(Star):
         """获取群号"""
         return get_group_id(event)
 
+    def _unique_strings(self, values: object) -> list[str]:
+        """获取唯一的字符串列表"""
+        return _unique_strings(values)
+
     def _format_help(self) -> str:
         """格式化帮助信息"""
         return format_help()
@@ -1548,6 +1552,77 @@ class BlindBoxPlugin(Star):
         )
         await self._save_state()
         return draw_data
+
+    async def _confirm_review(self, event: AstrMessageEvent, submission_id: str, verdict: str):
+        """管理员确认审核结果"""
+        try:
+            if submission_id not in self._pending_reviews:
+                yield event.plain_result(f"找不到提交编号 {submission_id} 的待确认审核。")
+                return
+
+            group_no, submission = self._pending_reviews[submission_id]
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no) if isinstance(groups, dict) else None
+
+            if not isinstance(group_data, dict):
+                yield event.plain_result(f"小组 {group_no} 不存在。")
+                return
+
+            draws = state.get("draws", {})
+            draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+            records = self._load_submission_records(group_no)
+
+            target_record = None
+            for record in records:
+                if isinstance(record, dict) and record.get("submission_id") == submission_id:
+                    target_record = record
+                    break
+
+            if target_record is None:
+                yield event.plain_result(f"找不到提交记录 {submission_id}。")
+                return
+
+            previous_award = int(target_record.get("awarded_points", 0))
+            previously_applied = bool(target_record.get("score_applied", False))
+            if previously_applied and previous_award:
+                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+
+            approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
+            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            applied_points = score_delta if approved else 0
+
+            target_record.update(
+                {
+                    "review_status": verdict or "pending",
+                    "review_reason": "管理员确认",
+                    "reviewer": str(self._get_sender_id(event)),
+                    "reviewed_at": timestamp(),
+                    "score_applied": bool(applied_points),
+                    "awarded_points": applied_points,
+                }
+            )
+
+            if approved:
+                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+
+            self._save_submission_records(group_no, records)
+            await self._save_state()
+
+            del self._pending_reviews[submission_id]
+
+            verdict_text = "通过✅" if approved else "拒绝❌"
+            yield event.plain_result(
+                f"审核确认完成！\n"
+                f"提交编号：{submission_id}\n"
+                f"小组：{group_data.get('group_name', '')}\n"
+                f"结果：{verdict_text}\n"
+                f"本轮积分：{applied_points}"
+            )
+
+        except Exception as exc:
+            logger.error("管理员确认审核出错：%s", exc, exc_info=True)
+            yield event.plain_result(f"确认审核出错：{exc}")
 
     def _export_submission_zip(self, group_no: str, submission_id: str) -> Path:
         folder = self._submission_folder(group_no, submission_id)
