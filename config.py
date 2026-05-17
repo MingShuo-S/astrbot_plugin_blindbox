@@ -111,12 +111,20 @@ CATEGORY_ALIASES = {
 
 def resolve_data_root() -> Path:
     """解析数据根目录"""
-    current_dir = Path(__file__).resolve().parent
-    for ancestor in [current_dir, *current_dir.parents]:
-        data_dir = ancestor / "data"
-        if data_dir.is_dir():
-            return data_dir / "plugins" / PLUGIN_NAME
-    return current_dir / "data" / "plugins" / PLUGIN_NAME
+    try:
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+        return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
+    except Exception:
+        current_dir = Path(__file__).resolve().parent
+        for ancestor in [current_dir, *current_dir.parents]:
+            data_dir = ancestor / "data"
+            if data_dir.is_dir():
+                plugin_data_dir = data_dir / "plugin_data"
+                if plugin_data_dir.is_dir():
+                    return plugin_data_dir / PLUGIN_NAME
+                return data_dir / "plugins" / PLUGIN_NAME
+        return current_dir / "data" / "plugin_data" / PLUGIN_NAME
 
 
 def now() -> datetime:

@@ -82,6 +82,20 @@ LEGACY_RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 LEGACY_SUBMISSION_DIR = LEGACY_RUNTIME_DIR / "submissions"
 
 
+def _legacy_resolve_data_root() -> Path:
+    """解析旧版数据根目录"""
+    current_dir = Path(__file__).resolve().parent
+    for ancestor in [current_dir, *current_dir.parents]:
+        data_dir = ancestor / "data"
+        if data_dir.is_dir():
+            return data_dir / "plugins" / PLUGIN_NAME
+    return current_dir / "data" / "plugins" / PLUGIN_NAME
+
+
+LEGACY_PLUGIN_DATA_ROOT = _legacy_resolve_data_root()
+LEGACY_PLUGIN_SUBMISSION_DIR = LEGACY_PLUGIN_DATA_ROOT / "submissions"
+
+
 def _normalize_category(raw_category: str) -> str:
     """规范化分类名称"""
     return storage_ops.normalize_category(raw_category)
@@ -705,6 +719,10 @@ class BlindBoxPlugin(Star):
         """获取遗留提交文件路径"""
         return LEGACY_SUBMISSION_DIR / f"group_{group_no}.json"
 
+    def _legacy_plugin_submission_file_path(self, group_no: str) -> Path:
+        """获取旧版插件数据目录中的提交文件路径"""
+        return LEGACY_PLUGIN_SUBMISSION_DIR / f"group_{group_no}.json"
+
     # =========================================================================
     # 提交记录存储和加载
     # =========================================================================
@@ -713,12 +731,21 @@ class BlindBoxPlugin(Star):
         """加载小组的提交记录"""
         new_path = self._submission_index_path(group_no)
         old_path = self._submission_file_path(group_no)
+        legacy_plugin_path = self._legacy_plugin_submission_file_path(group_no)
         legacy_path = self._legacy_submission_file_path(group_no)
+
+        def _safe_int(value: object, default: int = 0) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
 
         if new_path.exists():
             source_path = new_path
         elif old_path.exists():
             source_path = old_path
+        elif legacy_plugin_path.exists():
+            source_path = legacy_plugin_path
         elif legacy_path.exists():
             source_path = legacy_path
         else:
@@ -731,6 +758,8 @@ class BlindBoxPlugin(Star):
         records: list[dict[str, object]] = []
         for record in raw_records:
             if isinstance(record, dict):
+                raw_images = record.get("images", [])
+                image_entries = raw_images if isinstance(raw_images, list) else []
                 records.append(
                     {
                         "submission_id": str(record.get("submission_id", "")),
@@ -745,7 +774,7 @@ class BlindBoxPlugin(Star):
                                 "url": str(image.get("url", "")),
                                 "path": str(image.get("path", "")),
                             }
-                            for image in record.get("images", [])
+                            for image in image_entries
                             if isinstance(image, dict)
                         ],
                         "local_images": _parse_qq_list(record.get("local_images", [])),
@@ -756,7 +785,7 @@ class BlindBoxPlugin(Star):
                         "review_reason": str(record.get("review_reason", "")),
                         "reviewer": str(record.get("reviewer", "")),
                         "reviewed_at": str(record.get("reviewed_at", "")),
-                        "awarded_points": int(record.get("awarded_points", 0)),
+                        "awarded_points": _safe_int(record.get("awarded_points", 0)),
                         "score_applied": bool(record.get("score_applied", False)),
                         "submitted_at": str(record.get("submitted_at", "")),
                     }

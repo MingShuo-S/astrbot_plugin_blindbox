@@ -116,7 +116,7 @@
 当前插件主要保存两类数据：
 
 1. **小组配置与抽取状态**：保存在 AstrBot 的 KV 状态里，包括 `groups`、`member_to_group`、`draws` 和 `pending_selections`
-2. **小组提交/打卡记录**：按小组单独保存为 JSON 文件，路径是 `data/plugins/astrbot_plugin_blindbox/submissions/group_<序号>.json`
+2. **小组提交/打卡记录**：按小组单独保存为 JSON 文件，路径是 `data/plugin_data/astrbot_plugin_blindbox/submissions/group_<序号>.json`
 
 每条提交记录通常包含这些信息：
 
