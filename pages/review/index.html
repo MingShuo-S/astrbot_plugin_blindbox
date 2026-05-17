@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BlindBox AI 审核管理</title>
+    <title>BlindBox 提交 review</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -11,14 +11,25 @@
       <header class="hero">
         <div>
           <p class="eyebrow">AstrBot Plugin Dashboard</p>
-          <h1>BlindBox AI 审核管理</h1>
-          <p class="lead">审核 AI 的任务审核结果，统一查看待确认的提交材料和审核意见。</p>
+          <h1>BlindBox 提交 review</h1>
+          <p class="lead">统一查看所有提交记录、提交图片与审核状态，并支持后台直接通过、拒绝或撤销审核。</p>
         </div>
         <div class="hero-card">
-          <div class="hero-card-title">待审核统计</div>
+          <div class="hero-card-title">提交统计</div>
           <div id="stats" class="stats"></div>
-          <div class="hero-card-actions">
+          <div class="toolbar">
+            <label class="field-inline">
+              <span>状态</span>
+              <select id="filterSelect">
+                <option value="all">全部</option>
+                <option value="pending">未审核</option>
+                <option value="approved">已通过</option>
+                <option value="rejected">已拒绝</option>
+              </select>
+            </label>
             <button id="refreshBtn" class="secondary">刷新</button>
+            <button id="exportAllBtn" class="secondary">导出全部 CSV</button>
+            <button id="exportApprovedBtn" class="secondary">导出通过 CSV</button>
           </div>
         </div>
       </header>
@@ -26,7 +37,7 @@
       <main class="grid">
         <section class="panel panel--wide">
           <div class="panel-head">
-            <h2>待确认的提交</h2>
+            <h2>全部提交记录</h2>
           </div>
           <div id="message" class="message"></div>
           <div id="reviews-container" class="reviews-container"></div>

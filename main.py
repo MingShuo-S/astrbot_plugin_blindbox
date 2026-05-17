@@ -309,6 +309,11 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-group-zip", self.api_group_export_group_zip, ["GET", "POST"], "导出小组全部提交为ZIP")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-submissions-all-csv", self.api_group_import_submissions_all_csv, ["POST"], "从 CSV 导入所有小组提交记录")
 
+        # Review 页面 API
+        context.register_web_api(f"/{PLUGIN_NAME}/review/records", self.api_review_records, ["GET"], "获取全部提交记录")
+        context.register_web_api(f"/{PLUGIN_NAME}/review/update", self.api_review_update, ["POST"], "更新提交审核状态")
+        context.register_web_api(f"/{PLUGIN_NAME}/review/export-csv", self.api_review_export_csv, ["GET", "POST"], "导出提交记录 CSV")
+
         # 任务管理 API
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/export-csv", self.api_tasks_export_csv, ["GET"], "导出任务列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/tasks/import-csv", self.api_tasks_import_csv, ["POST"], "从CSV导入任务列表")
@@ -1174,6 +1179,124 @@ class BlindBoxPlugin(Star):
             return {"prompt": self._build_ai_prompt_context()}
         return await self._api_result(_handler)
 
+    def _normalize_review_status(self, verdict: str) -> str:
+        """规范化审核状态"""
+        value = str(verdict or "").strip().lower()
+        if value in {"approved", "accept", "pass", "ok", "通过", "confirmed", "confirm"}:
+            return "approved"
+        if value in {"rejected", "reject", "deny", "denied", "拒绝"}:
+            return "rejected"
+        if value in {"pending", "unreview", "cancel", "reset", "撤销", "取消", "未审核", "取消审核"}:
+            return "pending"
+        return value or "pending"
+
+    async def _find_submission_record(
+        self,
+        submission_id: str,
+        group_no: str = "",
+    ) -> tuple[str, list[dict[str, object]], dict[str, object], int]:
+        """按提交编号查找提交记录"""
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        if not isinstance(groups, dict):
+            raise ValueError("小组数据异常。")
+
+        candidate_group_nos = [group_no] if group_no else sorted(groups.keys(), key=str)
+        for current_group_no in candidate_group_nos:
+            records = self._load_submission_records(str(current_group_no))
+            for index, record in enumerate(records):
+                if isinstance(record, dict) and str(record.get("submission_id", "")) == submission_id:
+                    return str(current_group_no), records, record, index
+
+        raise ValueError(f"找不到提交记录 {submission_id}。")
+
+    async def _build_submission_preview_images(
+        self,
+        group_no: str,
+        record: dict[str, object],
+    ) -> list[dict[str, str]]:
+        """构建提交图片预览链接"""
+        preview_images: list[dict[str, str]] = []
+        submission_id = str(record.get("submission_id", "")).strip()
+        submission_folder = self._submission_folder(group_no, submission_id)
+
+        for image_url in _parse_qq_list(record.get("image_urls", [])):
+            if image_url:
+                preview_images.append({"type": "remote", "url": image_url, "name": image_url})
+
+        for image_name in _parse_qq_list(record.get("local_images", [])):
+            file_path = submission_folder / image_name
+            if not file_path.exists():
+                continue
+            token = await file_token_service.register_file(str(file_path))
+            preview_images.append(
+                {
+                    "type": "local",
+                    "url": f"{self._get_callback_base()}/api/file/{token}",
+                    "name": image_name,
+                }
+            )
+
+        return preview_images
+
+    async def _update_submission_review(
+        self,
+        submission_id: str,
+        verdict: str,
+        review_reason: str = "",
+        reviewer: str = "",
+        group_no: str = "",
+    ) -> dict[str, object]:
+        """更新提交审核状态"""
+        normalized_verdict = self._normalize_review_status(verdict)
+        current_group_no, records, target_record, _ = await self._find_submission_record(submission_id, group_no)
+
+        state = await self._get_state()
+        groups = state.get("groups", {})
+        group_data = groups.get(current_group_no) if isinstance(groups, dict) else None
+        if not isinstance(group_data, dict):
+            raise ValueError(f"小组 {current_group_no} 不存在。")
+
+        previous_award = int(target_record.get("awarded_points", 0))
+        previously_applied = bool(target_record.get("score_applied", False))
+        if previously_applied and previous_award:
+            group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
+
+        task_snapshot = target_record.get("task_snapshot", {})
+        score_delta = int(task_snapshot.get("points", 0)) if isinstance(task_snapshot, dict) else 0
+        applied_points = score_delta if normalized_verdict == "approved" else 0
+        reviewer_name = str(reviewer or "").strip() or "admin"
+        review_reason_text = str(review_reason or "").strip()
+
+        if normalized_verdict == "pending" and not review_reason_text:
+            review_reason_text = "审核状态已取消"
+
+        target_record.update(
+            {
+                "review_status": normalized_verdict,
+                "review_reason": review_reason_text,
+                "reviewer": reviewer_name,
+                "reviewed_at": timestamp(),
+                "score_applied": bool(applied_points),
+                "awarded_points": applied_points,
+            }
+        )
+
+        if normalized_verdict == "approved":
+            group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
+
+        self._save_submission_records(current_group_no, records)
+        await self._save_state()
+        self._pending_reviews.pop(submission_id, None)
+
+        return {
+            "group_no": current_group_no,
+            "group_name": str(group_data.get("group_name", "")),
+            "submission": target_record,
+            "review_status": normalized_verdict,
+            "awarded_points": applied_points,
+        }
+
     async def api_submit(self):
         """提交任务"""
         payload = await self._get_request_json()
@@ -1665,8 +1788,171 @@ class BlindBoxPlugin(Star):
                             "submitted_at": record.get("submitted_at", ""),
                             "task": record.get("task_snapshot", {}),
                         })
-            
             return {"pending_count": len(pending), "pending": pending}
+
+        return await self._api_result(_handler)
+
+    async def api_review_records(self):
+        """获取所有提交记录"""
+        async def _handler():
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            if not isinstance(groups, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+            args = request.args
+            status_filter = self._normalize_review_status(str(args.get("status", "all"))).strip()
+            if status_filter not in {"all", "pending", "approved", "rejected"}:
+                status_filter = "all"
+            group_no = str(args.get("group_no", "")).strip()
+            with_preview = str(args.get("with_preview", "1")).lower() not in {"0", "false", "no", "off"}
+
+            selected_group_nos = [group_no] if group_no else sorted(groups.keys(), key=str)
+            records: list[dict[str, object]] = []
+
+            for current_group_no in selected_group_nos:
+                group_data = groups.get(current_group_no)
+                if not isinstance(group_data, dict):
+                    continue
+
+                for record in self._load_submission_records(str(current_group_no)):
+                    review_status = self._normalize_review_status(str(record.get("review_status", "pending")))
+                    if status_filter != "all" and review_status != status_filter:
+                        continue
+
+                    preview_images: list[dict[str, str]] = []
+                    if with_preview:
+                        preview_images = await self._build_submission_preview_images(str(current_group_no), record)
+
+                    records.append(
+                        {
+                            "group_no": str(current_group_no),
+                            "group_name": str(group_data.get("group_name", "")),
+                            "submission_id": str(record.get("submission_id", "")),
+                            "submitter_qq": str(record.get("submitter_qq", "")),
+                            "submitted_at": str(record.get("submitted_at", "")),
+                            "task_snapshot": record.get("task_snapshot", {}),
+                            "materials_text": str(record.get("materials_text", "")),
+                            "image_urls": _parse_qq_list(record.get("image_urls", [])),
+                            "local_images": _parse_qq_list(record.get("local_images", [])),
+                            "review_status": review_status,
+                            "review_reason": str(record.get("review_reason", "")),
+                            "reviewer": str(record.get("reviewer", "")),
+                            "reviewed_at": str(record.get("reviewed_at", "")),
+                            "awarded_points": int(record.get("awarded_points", 0)),
+                            "score_applied": bool(record.get("score_applied", False)),
+                            "attachments": preview_images,
+                        }
+                    )
+
+            records.sort(key=lambda item: (str(item.get("submitted_at", "")), str(item.get("submission_id", ""))), reverse=True)
+            pending_count = sum(1 for item in records if item.get("review_status") == "pending")
+            return {
+                "status": status_filter,
+                "group_no": group_no,
+                "total": len(records),
+                "pending_count": pending_count,
+                "records": records,
+            }
+
+        return await self._api_result(_handler)
+
+    async def api_review_update(self):
+        """更新提交审核状态"""
+        payload = await self._get_request_json()
+        submission_id = str(payload.get("submission_id", "")).strip()
+        verdict = str(payload.get("verdict", "")).strip()
+        review_reason = str(payload.get("review_reason", "")).strip()
+        reviewer = str(payload.get("reviewer", "admin")).strip() or "admin"
+        group_no = str(payload.get("group_no", "")).strip()
+
+        async def _handler():
+            if not submission_id:
+                raise ValueError("submission_id 不能为空。")
+            return await self._update_submission_review(
+                submission_id=submission_id,
+                verdict=verdict,
+                review_reason=review_reason,
+                reviewer=reviewer,
+                group_no=group_no,
+            )
+
+        return await self._api_result(_handler)
+
+    async def api_review_export_csv(self):
+        """导出提交记录为 CSV"""
+        async def _handler():
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            if not isinstance(groups, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+            args = request.args
+            status_filter = self._normalize_review_status(str(args.get("status", "all"))).strip()
+            if status_filter not in {"all", "pending", "approved", "rejected"}:
+                status_filter = "all"
+
+            output = StringIO()
+            fieldnames = [
+                "group_no",
+                "group_name",
+                "submission_id",
+                "submitter_qq",
+                "submitted_at",
+                "task_category",
+                "task_title",
+                "task_points",
+                "materials_text",
+                "image_count",
+                "image_urls",
+                "local_images",
+                "review_status",
+                "review_reason",
+                "reviewer",
+                "reviewed_at",
+                "awarded_points",
+                "score_applied",
+            ]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for group_no in sorted(groups.keys(), key=str):
+                group_data = groups.get(group_no)
+                if not isinstance(group_data, dict):
+                    continue
+
+                for record in self._load_submission_records(str(group_no)):
+                    review_status = self._normalize_review_status(str(record.get("review_status", "pending")))
+                    if status_filter != "all" and review_status != status_filter:
+                        continue
+
+                    task_snapshot = record.get("task_snapshot", {})
+                    writer.writerow(
+                        {
+                            "group_no": str(group_no),
+                            "group_name": str(group_data.get("group_name", "")),
+                            "submission_id": str(record.get("submission_id", "")),
+                            "submitter_qq": str(record.get("submitter_qq", "")),
+                            "submitted_at": str(record.get("submitted_at", "")),
+                            "task_category": str(task_snapshot.get("category", "")) if isinstance(task_snapshot, dict) else "",
+                            "task_title": str(task_snapshot.get("title", "")) if isinstance(task_snapshot, dict) else "",
+                            "task_points": int(task_snapshot.get("points", 0)) if isinstance(task_snapshot, dict) else 0,
+                            "materials_text": str(record.get("materials_text", "")),
+                            "image_count": len(record.get("images", [])) if isinstance(record.get("images", []), list) else 0,
+                            "image_urls": " | ".join(_parse_qq_list(record.get("image_urls", []))),
+                            "local_images": " | ".join(_parse_qq_list(record.get("local_images", []))),
+                            "review_status": review_status,
+                            "review_reason": str(record.get("review_reason", "")),
+                            "reviewer": str(record.get("reviewer", "")),
+                            "reviewed_at": str(record.get("reviewed_at", "")),
+                            "awarded_points": int(record.get("awarded_points", 0)),
+                            "score_applied": "1" if bool(record.get("score_applied", False)) else "0",
+                        }
+                    )
+
+            csv_data = output.getvalue().encode("utf-8-sig")
+            filename = "review_records.csv" if status_filter == "all" else f"review_records_{status_filter}.csv"
+            return Response(csv_data, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
         return await self._api_result(_handler)
 
@@ -1675,15 +1961,20 @@ class BlindBoxPlugin(Star):
         payload = await self._get_request_json()
         group_no = str(payload.get("group_no", "")).strip()
         submission_id = str(payload.get("submission_id", "")).strip()
+        verdict = str(payload.get("verdict", "approved")).strip() or "approved"
+        review_reason = str(payload.get("review_reason", "管理员确认")).strip() or "管理员确认"
+        reviewer = str(payload.get("reviewer", "admin")).strip() or "admin"
 
         async def _handler():
-            records = self._load_submission_records(group_no)
-            for record in records:
-                if record.get("submission_id") == submission_id:
-                    record["review_status"] = "confirmed"
-                    break
-            self._save_submission_records(group_no, records)
-            return {"status": "confirmed"}
+            if not submission_id:
+                raise ValueError("submission_id 不能为空。")
+            return await self._update_submission_review(
+                submission_id=submission_id,
+                verdict=verdict,
+                review_reason=review_reason,
+                reviewer=reviewer,
+                group_no=group_no,
+            )
 
         return await self._api_result(_handler)
 
