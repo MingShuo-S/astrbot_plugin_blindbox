@@ -1492,11 +1492,10 @@ class BlindBoxPlugin(Star):
 
     async def api_review_upload_image(self):
         """上传图片到服务器"""
-        from werkzeug.datastructures import FileStorage
         
         async def _handler():
             # 获取上传的文件
-            files = request.files
+            files = await request.files
             if "file" not in files:
                 raise ValueError("没有接收到文件。")
             

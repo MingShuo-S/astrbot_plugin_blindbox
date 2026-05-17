@@ -413,20 +413,19 @@ async function uploadImages(files) {
   
   for (const file of files) {
     try {
-      // 使用FormData上传文件
-      const formData = new FormData();
-      formData.append("file", file);
-      
-      const result = await bridge.apiPost("review/upload-image", formData);
+      // 使用官方推荐的 bridge.upload() 方法
+      const result = await bridge.upload("review/upload-image", file);
       const normalized = normalizeApiResponse(result);
       
       if (normalized.success && normalized.data?.url) {
         uploadedUrls.push(normalized.data.url);
       } else {
-        console.warn(`图片上传失败: ${file.name}`);
+        console.warn(`图片上传失败: ${file.name}`, normalized.message || normalized.error);
+        showMessage(`图片 "${file.name}" 上传失败`, "error");
       }
     } catch (error) {
       console.error(`上传图片出错: ${file.name}`, error);
+      showMessage(`图片 "${file.name}" 上传失败: ${error.message}`, "error");
     }
   }
   
