@@ -211,6 +211,23 @@ class BlindBoxPlugin(Star):
         """获取唯一的字符串列表"""
         return _unique_strings(values)
 
+    def _build_ai_group_context(
+        self,
+        group_no: str,
+        group_data: dict[str, object],
+        draw_data: object,
+    ) -> dict[str, object]:
+        """构建 AI 用的小组上下文"""
+        return build_ai_group_context(group_no, group_data, draw_data, self._load_submission_records)
+
+    def _build_ai_prompt_context(self) -> str:
+        """构建 AI 审核提示词"""
+        return build_ai_prompt_context()
+
+    def _timestamp(self) -> str:
+        """获取当前时间戳字符串"""
+        return timestamp()
+
     def _format_help(self) -> str:
         """格式化帮助信息"""
         return format_help()
