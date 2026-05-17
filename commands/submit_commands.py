@@ -42,6 +42,22 @@ async def handle_submit(
         yield plain_result_with_tip(plugin, event, f"QQ 号 {sender_id} 还没有绑定到任何小组。")
         return
 
+    # 检查小组是否有进行中的任务
+    task_overview = await plugin._build_current_group_task_overview(group_no)
+    if not task_overview.get("has_active_draw"):
+        yield plain_result_with_tip(plugin, event, "当前小组没有进行中的任务，请先抽取盲盒任务后再提交。")
+        return
+    
+    # 如果任务已过期（超过7天），也不允许提交
+    if task_overview.get("block_draw"):
+        summary_text = str(task_overview.get("summary_text", "")).strip()
+        block_message = str(task_overview.get("block_message", "")).strip()
+        message_parts = [summary_text] if summary_text else []
+        if block_message:
+            message_parts.append(block_message)
+        yield plain_result_with_tip(plugin, event, "\n\n".join(message_parts) if message_parts else block_message)
+        return
+
     _msg_text, image_urls, images = extract_message_text_and_images(event)
     materials_text = " ".join(args).strip() if args else ""
 

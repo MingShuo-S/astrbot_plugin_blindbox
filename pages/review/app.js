@@ -8,9 +8,19 @@ const exportApprovedBtn = document.getElementById("exportApprovedBtn");
 const filterSelect = document.getElementById("filterSelect");
 const recordsContainer = document.getElementById("reviews-container");
 const manualCreateForm = document.getElementById("manualCreateForm");
+const submitterQQInput = manualCreateForm?.querySelector('input[name="submitter_qq"]');
+const autoGroupNoInput = document.getElementById("autoGroupNo");
+const taskSelector = document.getElementById("taskSelector");
+const taskCategoryInput = document.getElementById("taskCategory");
+const taskTitleInput = document.getElementById("taskTitle");
+const taskPointsInput = document.getElementById("taskPoints");
+const imageFilesInput = document.getElementById("imageFiles");
+const imagePreviewContainer = document.getElementById("imagePreview");
 
 let pageContext = null;
 let reviewRecords = [];
+let availableTasks = [];
+let selectedImageFiles = [];
 
 async function getBridge() {
   if (window.AstrBotPluginPage) {
@@ -95,19 +105,22 @@ function renderAttachments(record) {
       <div class="section-title">提交图片</div>
       <div class="attachments-grid">
         ${items
-          .map((item) => {
+          .map((item, index) => {
             if (item.url) {
+              // 使用onclick打开图片，避免sandbox限制
               return `
-                <a class="attachment-card attachment-card--link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">
-                  <div class="attachment-placeholder">点击查看图片</div>
+                <div class="attachment-card attachment-card--link" onclick="window.open('${escapeHtml(item.url)}', '_blank')" style="cursor: pointer;">
+                  <img src="${escapeHtml(item.url)}" alt="提交图片 ${index + 1}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                  <div class="attachment-placeholder" style="display: none;">加载失败</div>
                   <span>${escapeHtml(item.name || "图片")}</span>
-                </a>
+                </div>
               `;
             }
 
+            // 本地图片显示提示
             return `
               <div class="attachment-card attachment-card--missing">
-                <div class="attachment-placeholder">图片已保存到服务器</div>
+                <div class="attachment-placeholder">图片已保存到服务器<br/><small>请在管理页面查看</small></div>
                 <span>${escapeHtml(item.name || "本地图片")}</span>
               </div>
             `;
@@ -219,6 +232,7 @@ function renderRecordCard(record) {
               <button class="btn btn--ghost" data-action="reset" data-submission-id="${escapeHtml(record.submission_id || "")}" data-group-no="${escapeHtml(record.group_no || "")}">取消审核状态</button>
             `
         }
+        <button class="btn btn--danger" data-action="delete" data-submission-id="${escapeHtml(record.submission_id || "")}" data-group-no="${escapeHtml(record.group_no || "")}" style="background: linear-gradient(135deg, #8b0000, #a52a2a);">删除记录</button>
       </footer>
     </article>
   `;
@@ -247,6 +261,8 @@ function renderRecords() {
         await updateReview(submissionId, "rejected", groupNo);
       } else if (action === "reset") {
         await updateReview(submissionId, "pending", groupNo);
+      } else if (action === "delete") {
+        await deleteSubmission(submissionId, groupNo);
       }
     });
   });
@@ -257,6 +273,172 @@ function parseTokenList(raw) {
     .split(/[\s,，;；\n]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+// 根据QQ号自动匹配小组
+async function findGroupByQQ(qq) {
+  if (!qq || !bridge) return null;
+  
+  try {
+    const payload = await bridge.apiGet("state");
+    const result = normalizeApiResponse(payload);
+    if (!result.success) return null;
+    
+    const state = result.data || {};
+    const groups = state.groups || {};
+    
+    for (const [groupNo, groupData] of Object.entries(groups)) {
+      const members = Array.isArray(groupData.members) ? groupData.members : [];
+      if (members.includes(String(qq))) {
+        return { group_no: groupNo, group_name: groupData.group_name || "" };
+      }
+    }
+  } catch (error) {
+    console.error("查找小组失败:", error);
+  }
+  
+  return null;
+}
+
+// 加载可用任务列表
+async function loadAvailableTasks() {
+  try {
+    const payload = await bridge.apiGet("tasks/stats");
+    const result = normalizeApiResponse(payload);
+    if (!result.success) return [];
+    
+    const data = result.data || {};
+    return Array.isArray(data.tasks) ? data.tasks : [];
+  } catch (error) {
+    console.error("加载任务列表失败:", error);
+    return [];
+  }
+}
+
+// 更新任务选择器
+function updateTaskSelector(tasks) {
+  if (!taskSelector) return;
+  
+  taskSelector.innerHTML = '<option value="">-- 从当前任务中选择 --</option>';
+  
+  tasks.forEach((task, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `${task.category || "未分类"} - ${task.title || "未命名"} (${task.points || 0}分)`;
+    option.dataset.category = task.category || "";
+    option.dataset.title = task.title || "";
+    option.dataset.points = task.points || 0;
+    taskSelector.appendChild(option);
+  });
+}
+
+// 处理任务选择变化
+function handleTaskSelection(event) {
+  const selectedIndex = event.target.value;
+  if (!selectedIndex && selectedIndex !== "0") {
+    taskCategoryInput.value = "";
+    taskTitleInput.value = "";
+    taskPointsInput.value = "";
+    return;
+  }
+  
+  const task = availableTasks[parseInt(selectedIndex)];
+  if (task) {
+    taskCategoryInput.value = task.category || "";
+    taskTitleInput.value = task.title || "";
+    taskPointsInput.value = task.points || 0;
+  }
+}
+
+// 处理图片文件选择
+function handleImageFileSelect(event) {
+  const files = Array.from(event.target.files || []);
+  selectedImageFiles = [...selectedImageFiles, ...files];
+  renderImagePreview();
+}
+
+// 渲染图片预览
+function renderImagePreview() {
+  if (!imagePreviewContainer) return;
+  
+  imagePreviewContainer.innerHTML = "";
+  
+  selectedImageFiles.forEach((file, index) => {
+    const previewItem = document.createElement("div");
+    previewItem.className = "image-preview-item";
+    
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(file);
+    img.alt = file.name;
+    
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "image-preview-remove";
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.onclick = () => {
+      selectedImageFiles.splice(index, 1);
+      renderImagePreview();
+    };
+    
+    previewItem.appendChild(img);
+    previewItem.appendChild(removeBtn);
+    imagePreviewContainer.appendChild(previewItem);
+  });
+}
+
+// 上传图片到服务器
+async function uploadImages(files) {
+  if (!files || files.length === 0) return [];
+  
+  const uploadedUrls = [];
+  
+  for (const file of files) {
+    try {
+      // 使用FormData上传文件
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const result = await bridge.apiPost("review/upload-image", formData);
+      const normalized = normalizeApiResponse(result);
+      
+      if (normalized.success && normalized.data?.url) {
+        uploadedUrls.push(normalized.data.url);
+      } else {
+        console.warn(`图片上传失败: ${file.name}`);
+      }
+    } catch (error) {
+      console.error(`上传图片出错: ${file.name}`, error);
+    }
+  }
+  
+  return uploadedUrls;
+}
+
+// 删除提交记录
+async function deleteSubmission(submissionId, groupNo) {
+  const confirmed = window.confirm(`确定要删除提交记录 ${submissionId} 吗？此操作不可恢复！`);
+  if (!confirmed) return;
+  
+  setLoading(true);
+  try {
+    const payload = await bridge.apiPost("review/delete", {
+      submission_id: submissionId,
+      group_no: groupNo,
+    });
+    const result = normalizeApiResponse(payload);
+    
+    if (!result.success) {
+      throw new Error(result.message || result.error || "删除失败");
+    }
+    
+    showMessage(`已删除提交记录 ${submissionId}`, "ok");
+    await loadRecords();
+  } catch (error) {
+    console.error("Error deleting submission:", error);
+    showMessage(`删除出错：${error.message}`, "error");
+  } finally {
+    setLoading(false);
+  }
 }
 
 function setLoading(isLoading) {
@@ -295,7 +477,9 @@ async function loadRecords() {
 
 async function updateReview(submissionId, verdict, groupNo) {
   const actionLabel = verdict === "approved" ? "通过" : verdict === "rejected" ? "拒绝" : "取消审核状态";
-  const confirmed = window.confirm(`确定要对提交 ${submissionId} 执行「${actionLabel}」吗？`);
+  
+  // 使用自定义确认对话框而不是window.confirm（避免sandbox限制）
+  const confirmed = await showCustomConfirm(`确定要对提交 ${submissionId} 执行「${actionLabel}」吗？`);
   if (!confirmed) {
     return;
   }
@@ -327,9 +511,83 @@ async function updateReview(submissionId, verdict, groupNo) {
   }
 }
 
+// 自定义确认对话框（避免sandbox的allow-modals限制）
+function showCustomConfirm(message) {
+  return new Promise((resolve) => {
+    // 创建模态框
+    const modal = document.createElement("div");
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+    
+    const dialog = document.createElement("div");
+    dialog.style.cssText = `
+      background: white;
+      padding: 24px;
+      border-radius: 16px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    `;
+    
+    dialog.innerHTML = `
+      <div style="margin-bottom: 20px; font-size: 16px; color: #172033;">${message}</div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button id="confirmCancel" style="padding: 10px 20px; border-radius: 8px; border: 1px solid #dce5ef; background: white; cursor: pointer;">取消</button>
+        <button id="confirmOk" style="padding: 10px 20px; border-radius: 8px; border: none; background: linear-gradient(135deg, #1f7a4f, #1891a3); color: white; cursor: pointer;">确定</button>
+      </div>
+    `;
+    
+    modal.appendChild(dialog);
+    document.body.appendChild(modal);
+    
+    const cleanup = () => {
+      document.body.removeChild(modal);
+    };
+    
+    document.getElementById("confirmCancel").onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+    
+    document.getElementById("confirmOk").onclick = () => {
+      cleanup();
+      resolve(true);
+    };
+    
+    // 点击背景关闭
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        cleanup();
+        resolve(false);
+      }
+    };
+  });
+}
+
 async function createManualRecord(formData) {
   setLoading(true);
   try {
+    // 先上传图片
+    let imageUrls = [];
+    if (selectedImageFiles.length > 0) {
+      showMessage("正在上传图片...", "ok");
+      imageUrls = await uploadImages(selectedImageFiles);
+      if (imageUrls.length === 0) {
+        throw new Error("图片上传失败");
+      }
+      showMessage(`成功上传 ${imageUrls.length} 张图片`, "ok");
+    }
+    
     const payload = {
       group_no: String(formData.get("group_no") || "").trim(),
       submitter_qq: String(formData.get("submitter_qq") || "").trim(),
@@ -338,7 +596,7 @@ async function createManualRecord(formData) {
       task_title: String(formData.get("task_title") || "").trim(),
       task_points: String(formData.get("task_points") || "").trim(),
       review_status: String(formData.get("review_status") || "pending").trim(),
-      image_urls: parseTokenList(String(formData.get("image_urls") || "")),
+      image_urls: imageUrls,
       review_reason: String(formData.get("review_reason") || "").trim(),
       reviewer: pageContext?.displayName || pageContext?.pluginName || "admin",
     };
@@ -351,6 +609,9 @@ async function createManualRecord(formData) {
 
     showMessage(`已新增提交记录 ${result.data?.submission?.submission_id || ""}`, "ok");
     manualCreateForm.reset();
+    selectedImageFiles = [];
+    renderImagePreview();
+    autoGroupNoInput.value = "";
     await loadRecords();
   } catch (error) {
     console.error("Error creating manual record:", error);
@@ -402,10 +663,55 @@ function bindEvents() {
   filterSelect.addEventListener("change", () => loadRecords());
   exportAllBtn.addEventListener("click", () => exportCsv("all"));
   exportApprovedBtn.addEventListener("click", () => exportCsv("approved"));
+  
+  // QQ号输入时自动匹配小组
+  if (submitterQQInput) {
+    let debounceTimer = null;
+    submitterQQInput.addEventListener("input", (event) => {
+      clearTimeout(debounceTimer);
+      const qq = event.target.value.trim();
+      
+      debounceTimer = setTimeout(async () => {
+        if (qq) {
+          const group = await findGroupByQQ(qq);
+          if (group) {
+            autoGroupNoInput.value = `${group.group_no} (${group.group_name})`;
+            autoGroupNoInput.dataset.groupNo = group.group_no;
+          } else {
+            autoGroupNoInput.value = "未找到对应小组";
+            autoGroupNoInput.dataset.groupNo = "";
+          }
+        } else {
+          autoGroupNoInput.value = "";
+          autoGroupNoInput.dataset.groupNo = "";
+        }
+      }, 500);
+    });
+  }
+  
+  // 任务选择器变化
+  if (taskSelector) {
+    taskSelector.addEventListener("change", handleTaskSelection);
+  }
+  
+  // 图片文件选择
+  if (imageFilesInput) {
+    imageFilesInput.addEventListener("change", handleImageFileSelect);
+  }
+  
   if (manualCreateForm) {
     manualCreateForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      
+      // 使用自动匹配的小组号
+      const groupNo = autoGroupNoInput.dataset.groupNo || "";
+      if (!groupNo) {
+        showMessage("请先输入有效的提交人QQ号以自动匹配小组", "error");
+        return;
+      }
+      
       const formData = new FormData(manualCreateForm);
+      formData.set("group_no", groupNo);
       await createManualRecord(formData);
     });
   }
@@ -415,6 +721,11 @@ async function init() {
   try {
     const bridgeApi = await getBridge();
     pageContext = await bridgeApi.ready();
+    
+    // 加载可用任务列表
+    availableTasks = await loadAvailableTasks();
+    updateTaskSelector(availableTasks);
+    
     bindEvents();
     await loadRecords();
   } catch (error) {

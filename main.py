@@ -338,6 +338,8 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/review/records", self.api_review_records, ["GET"], "获取全部提交记录")
         context.register_web_api(f"/{PLUGIN_NAME}/review/create", self.api_review_create, ["POST"], "手动新增提交记录")
         context.register_web_api(f"/{PLUGIN_NAME}/review/update", self.api_review_update, ["POST"], "更新提交审核状态")
+        context.register_web_api(f"/{PLUGIN_NAME}/review/delete", self.api_review_delete, ["POST"], "删除提交记录")
+        context.register_web_api(f"/{PLUGIN_NAME}/review/upload-image", self.api_review_upload_image, ["POST"], "上传图片到服务器")
         context.register_web_api(f"/{PLUGIN_NAME}/review/export-csv", self.api_review_export_csv, ["GET", "POST"], "导出提交记录 CSV")
 
         # 任务管理 API
@@ -1425,6 +1427,115 @@ class BlindBoxPlugin(Star):
         payload = await self._get_request_json()
         group_no = str(payload.get("group_no", "")).strip()
         submitter_qq = str(payload.get("submitter_qq", "")).strip()
+
+    async def api_review_delete(self):
+        """删除提交记录"""
+        payload = await self._get_request_json()
+        submission_id = str(payload.get("submission_id", "")).strip()
+        group_no = str(payload.get("group_no", "")).strip()
+
+        async def _handler():
+            if not submission_id:
+                raise ValueError("submission_id 不能为空。")
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+
+            # 加载提交记录
+            records = self._load_submission_records(group_no)
+            
+            # 找到并删除指定记录
+            original_count = len(records)
+            records = [r for r in records if str(r.get("submission_id", "")) != submission_id]
+            
+            if len(records) == original_count:
+                raise ValueError(f"找不到提交记录 {submission_id}")
+            
+            # 如果记录已通过审核且已应用积分，需要回退积分
+            target_record = None
+            for r in self._load_submission_records(group_no):
+                if str(r.get("submission_id", "")) == submission_id:
+                    target_record = r
+                    break
+            
+            if target_record:
+                review_status = str(target_record.get("review_status", "pending")).lower()
+                awarded_points = _safe_int(target_record.get("awarded_points", 0))
+                score_applied = bool(target_record.get("score_applied", False))
+                
+                # 如果已通过且已应用积分，回退积分
+                if review_status == "approved" and score_applied and awarded_points > 0:
+                    state = await self._get_state()
+                    groups = state.get("groups", {})
+                    group_data = groups.get(group_no)
+                    if isinstance(group_data, dict):
+                        group_data["score_total"] = max(0, _safe_int(group_data.get("score_total", 0)) - awarded_points)
+                        await self._save_state()
+            
+            # 保存更新后的记录
+            self._save_submission_records(group_no, records)
+            
+            # 删除对应的文件目录
+            try:
+                folder = self._submission_folder(group_no, submission_id)
+                if folder.exists():
+                    import shutil
+                    shutil.rmtree(folder)
+            except Exception as e:
+                logger.warning(f"删除提交文件夹失败: {e}")
+            
+            return {
+                "success": True,
+                "message": f"已删除提交记录 {submission_id}",
+            }
+
+        return await self._api_result(_handler)
+
+    async def api_review_upload_image(self):
+        """上传图片到服务器"""
+        from werkzeug.datastructures import FileStorage
+        
+        async def _handler():
+            # 获取上传的文件
+            files = request.files
+            if "file" not in files:
+                raise ValueError("没有接收到文件。")
+            
+            file = files["file"]
+            if not file or not file.filename:
+                raise ValueError("文件名为空。")
+            
+            # 验证文件类型
+            allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+            file_ext = Path(file.filename).suffix.lower()
+            if file_ext not in allowed_extensions:
+                raise ValueError(f"不支持的文件类型: {file_ext}")
+            
+            # 生成唯一文件名
+            from .config import gen_uuid
+            unique_name = f"{gen_uuid()}{file_ext}"
+            
+            # 使用AstrBot官方data文件夹存储
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME / "review_images"
+            plugin_data_path.mkdir(parents=True, exist_ok=True)
+            
+            file_path = plugin_data_path / unique_name
+            
+            # 保存文件
+            file.save(str(file_path))
+            
+            # 返回可访问的URL（相对路径）
+            relative_url = f"/data/plugin_data/{PLUGIN_NAME}/review_images/{unique_name}"
+            
+            return {
+                "success": True,
+                "url": relative_url,
+                "filename": unique_name,
+            }
+
+        return await self._api_result(_handler)
+
+    async def api_review_export_csv(self):
         materials_text = str(payload.get("materials_text", "")).strip()
         image_urls = _parse_qq_list(payload.get("image_urls", []))
         images = payload.get("images", [])
@@ -2094,6 +2205,12 @@ class BlindBoxPlugin(Star):
             if not self._group_has_member(group_data, submitter_qq):
                 raise ValueError("提交人必须是本组成员。")
 
+            # 检查小组是否有进行中的任务（仅当没有手动指定任务信息时）
+            if not task_category and not task_title:
+                task_overview = await self._build_current_group_task_overview(group_no)
+                if not task_overview.get("has_active_draw"):
+                    raise ValueError("当前小组没有进行中的任务，请先抽取盲盒任务后再提交，或手动填写任务信息。")
+
             state = await self._get_state()
             draw_data = None
             if isinstance(state.get("draws", {}), dict):
@@ -2106,19 +2223,6 @@ class BlindBoxPlugin(Star):
                 task_snapshot["title"] = task_title
             if str(task_points_raw).strip():
                 task_snapshot["points"] = _safe_int(task_points_raw, 0)
-
-            from .business.submission import build_submission_record
-
-            submission = build_submission_record(
-                group_no=group_no,
-                group_data=group_data,
-                submitter_qq=submitter_qq,
-                materials_text=materials_text,
-                image_urls=image_urls,
-                images=[],
-                source=str(payload.get("source", "manual")),
-                draw_data=task_snapshot,
-            )
             if submitted_at:
                 submission["submitted_at"] = submitted_at
 
