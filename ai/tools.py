@@ -32,6 +32,9 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
     )
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> dict | str:
+        import base64
+        from io import BytesIO
+
         group_no = str(kwargs.get("group_no", "")).strip()
 
         try:
@@ -41,6 +44,40 @@ class BlindboxGetSubmissionsTool(FunctionTool[AstrAgentContext]):
             group_data = await self.plugin_instance._ensure_group_or_raise(group_no)
             records = self.plugin_instance._load_submission_records(group_no)
             pending = [r for r in records if r.get("review_status") == "pending"]
+
+            # 为每个待审核提交附带图片的 base64 数据，让 AI 能"看到"图片
+            for submission in pending:
+                submission_id = str(submission.get("submission_id", ""))
+                folder = self.plugin_instance._submission_folder(group_no, submission_id)
+                image_data: list[str] = []
+                for img_name in submission.get("local_images", []):
+                    img_path = folder / img_name
+                    if not img_path.exists():
+                        continue
+                    try:
+                        raw = img_path.read_bytes()
+                        # 压缩大图：最大宽度 512px
+                        try:
+                            from PIL import Image as PILImage
+
+                            img = PILImage.open(BytesIO(raw))
+                            w, h = img.size
+                            if w > 512:
+                                ratio = 512.0 / w
+                                img = img.resize((512, int(h * ratio)), PILImage.LANCZOS)
+                                buf = BytesIO()
+                                img_format = img.format or "JPEG"
+                                if img.mode in ("RGBA", "P", "LA"):
+                                    img = img.convert("RGB")
+                                img.save(buf, format="JPEG" if img_format.upper() == "JPEG" else img_format, quality=75)
+                                raw = buf.getvalue()
+                        except Exception:
+                            pass  # PIL 不可用或处理失败则用原图
+                        b64 = base64.b64encode(raw).decode("ascii")
+                        image_data.append(f"data:image/jpeg;base64,{b64}")
+                    except Exception:
+                        pass
+                submission["image_data"] = image_data
 
             return {
                 "group_no": group_no,
@@ -150,7 +187,12 @@ class BlindboxReviewSubmissionTool(FunctionTool[AstrAgentContext]):
                 )
 
             approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
-            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            if score_delta_raw is not None:
+                score_delta = int(score_delta_raw)
+            elif isinstance(draw_data, dict):
+                score_delta = int(draw_data.get("points", 0))
+            else:
+                score_delta = 0
             applied_points = score_delta if approved else 0
 
             target_record.update(

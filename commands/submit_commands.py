@@ -25,6 +25,7 @@ async def handle_submit(
     Yields:
         消息结果
     """
+    from ..config import timestamp
     from ..parser import extract_message_text_and_images
     
     try:
@@ -90,5 +91,5 @@ async def handle_submit(
         )
     )
 
-    plugin._pending_reviews[submission_id] = (group_no, submission)
+    plugin._pending_reviews[submission_id] = (group_no, submission, timestamp())
     asyncio.create_task(plugin._trigger_ai_review(event, group_no, submission_id))

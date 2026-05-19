@@ -206,7 +206,7 @@ class BlindBoxPlugin(Star):
         self._state: dict[str, object] = default_state()
 
         # 待审核的提交
-        self._pending_reviews: dict[str, tuple[str, dict]] = {}
+        self._pending_reviews: dict[str, tuple[str, dict, str]] = {}  # (group_no, submission, created_at)
         # 用户当前的选择状态
         self._user_selections: dict[str, dict[str, object]] = {}
 
@@ -843,6 +843,29 @@ class BlindBoxPlugin(Star):
         except Exception:
             return False
 
+    @staticmethod
+    def _guess_image_ext(image_entry: dict[str, str], file_path: Path) -> str:
+        """从图片来源或文件内容推测扩展名，用于 JPEG 转换失败时的回退"""
+        # 优先从来源路径推导
+        for key in ("path", "url", "file"):
+            source = image_entry.get(key, "")
+            if source:
+                ext = Path(source).suffix.lower()
+                if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}:
+                    return ".jpg" if ext == ".jpeg" else ext
+        # 其次用 PIL 检测实际格式
+        try:
+            from PIL import Image as PILImage
+
+            img = PILImage.open(file_path)
+            fmt = (img.format or "").lower()
+            mapping = {"jpeg": ".jpg", "png": ".png", "gif": ".gif", "webp": ".webp", "bmp": ".bmp"}
+            if fmt in mapping:
+                return mapping[fmt]
+        except Exception:
+            pass
+        return ".bin"
+
     async def _download_image(self, url: str, dest_path: Path) -> bool:
         """下载图片"""
         try:
@@ -863,7 +886,7 @@ class BlindBoxPlugin(Star):
         materials_text: str,
         images: list[dict[str, str]],
     ) -> list[str]:
-        """保存提交的文件"""
+        """保存提交的文件，非 JPEG 图片自动转换"""
         folder = self._submission_folder(group_no, submission_id)
         folder.mkdir(parents=True, exist_ok=True)
 
@@ -871,19 +894,18 @@ class BlindBoxPlugin(Star):
 
         local_images: list[str] = []
         for idx, image_entry in enumerate(images):
-            ext = ".jpg"
-            saved_path = folder / f"image_{idx + 1:03d}{ext}"
+            tmp_path = folder / f"image_{idx + 1:03d}.tmp"
             saved = False
 
             url = image_entry.get("url", "")
             if url and url.startswith("http"):
-                saved = await self._download_image(url, saved_path)
+                saved = await self._download_image(url, tmp_path)
 
             if not saved:
                 src_path = image_entry.get("path", "")
                 if src_path and Path(src_path).exists():
                     try:
-                        shutil.copy2(src_path, saved_path)
+                        shutil.copy2(src_path, tmp_path)
                         saved = True
                     except OSError as e:
                         logger.warning("复制图片失败: %s → %s", src_path, e)
@@ -894,7 +916,7 @@ class BlindBoxPlugin(Star):
                     file_path = Path(file_id)
                     if file_path.exists():
                         try:
-                            shutil.copy2(file_path, saved_path)
+                            shutil.copy2(file_path, tmp_path)
                             saved = True
                         except OSError:
                             pass
@@ -903,19 +925,23 @@ class BlindBoxPlugin(Star):
                 logger.warning("无法保存图片: submission=%s idx=%d entry=%s", submission_id, idx, image_entry)
                 continue
 
-            if saved_path.suffix.lower() != ".jpg":
-                jpg_path = saved_path.with_suffix(".jpg")
-                if self._convert_image_to_jpeg(saved_path, jpg_path):
-                    try:
-                        saved_path.unlink()
-                    except OSError:
-                        pass
-                    saved_path = jpg_path
-                    ext = ".jpg"
-                else:
-                    ext = saved_path.suffix
-
-            local_images.append(saved_path.name)
+            # 尝试将图片转换为 JPEG
+            jpg_path = folder / f"image_{idx + 1:03d}.jpg"
+            if self._convert_image_to_jpeg(tmp_path, jpg_path):
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+                local_images.append(jpg_path.name)
+            else:
+                # 转换失败则保留原格式，通过来源或 PIL 推测扩展名
+                ext = self._guess_image_ext(image_entry, tmp_path)
+                final_path = folder / f"image_{idx + 1:03d}{ext}"
+                try:
+                    tmp_path.rename(final_path)
+                except OSError:
+                    final_path = tmp_path
+                local_images.append(final_path.name)
 
         return local_images
 
@@ -1029,11 +1055,38 @@ class BlindBoxPlugin(Star):
                 "ProviderNotFoundError",
                 "AuthenticationError",
                 "RateLimitError",
+                "ServiceUnavailableError",
+                "InternalServerError",
+                "overloaded_error",
+                "rate_limit_error",
+                "APIError",
+                "APITimeoutError",
+                "APIStatusError",
+                "PermissionDeniedError",
+                "context_length_exceeded",
+                "max_tokens",
             ]
             if any(marker in completion for marker in _error_markers):
                 await event.send(MessageChain([Plain(
                     f"[AI 审核失败] 提交编号 {submission_id} 自动审核未能完成。\n"
                     f"原因：AI 模型服务异常，请管理员手动审核。\n\n"
+                    f"审核通过：/blindbox pass {submission_id}\n"
+                    f"审核拒绝：/blindbox deny {submission_id}"
+                )]))
+                return
+
+            # 核验审核工具是否被实际调用：重读提交记录，若状态仍为 pending 则视为失败
+            actual_records = self._load_submission_records(group_no)
+            actually_reviewed = False
+            for r in actual_records:
+                if isinstance(r, dict) and r.get("submission_id") == submission_id:
+                    if r.get("review_status") != "pending":
+                        actually_reviewed = True
+                    break
+            if not actually_reviewed:
+                await event.send(MessageChain([Plain(
+                    f"[AI 审核失败] 提交编号 {submission_id} 自动审核未能完成。\n"
+                    f"原因：AI 未成功调用审核工具，请管理员手动审核。\n\n"
                     f"审核通过：/blindbox pass {submission_id}\n"
                     f"审核拒绝：/blindbox deny {submission_id}"
                 )]))
@@ -2247,6 +2300,7 @@ class BlindBoxPlugin(Star):
             if isinstance(state.get("draws", {}), dict):
                 draw_data = state.get("draws", {}).get(group_no)
 
+            # 构建 task_snapshot（从 draw_data 复制，避免修改 live state）
             task_snapshot = dict(draw_data) if isinstance(draw_data, dict) else {}
             if task_category:
                 task_snapshot["category"] = task_category
@@ -2254,6 +2308,19 @@ class BlindBoxPlugin(Star):
                 task_snapshot["title"] = task_title
             if str(task_points_raw).strip():
                 task_snapshot["points"] = _safe_int(task_points_raw, 0)
+
+            from .business.submission import build_submission_record
+
+            submission = build_submission_record(
+                group_no=group_no,
+                group_data=group_data,
+                submitter_qq=submitter_qq,
+                materials_text=materials_text,
+                image_urls=image_urls,
+                images=[],
+                source="manual",
+                draw_data=task_snapshot,
+            )
             if submitted_at:
                 submission["submitted_at"] = submitted_at
 
@@ -2439,7 +2506,18 @@ class BlindBoxPlugin(Star):
                 yield event.plain_result(f"找不到提交编号 {submission_id} 的待确认审核。")
                 return
 
-            group_no, submission = self._pending_reviews[submission_id]
+            group_no, submission, created_at = self._pending_reviews[submission_id]
+
+            # 超过 7 天的待确认审核自动过期
+            created_dt = None
+            try:
+                created_dt = datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+            if created_dt and (now() - created_dt) >= timedelta(days=7):
+                del self._pending_reviews[submission_id]
+                yield event.plain_result(f"提交编号 {submission_id} 的待确认审核已过期（超过 7 天），请重新提交任务。")
+                return
             state = await self._get_state()
             groups = state.get("groups", {})
             group_data = groups.get(group_no) if isinstance(groups, dict) else None
@@ -2463,13 +2541,14 @@ class BlindBoxPlugin(Star):
                 return
 
             previous_award = int(target_record.get("awarded_points", 0))
-            previously_applied = bool(target_record.get("score_applied", False))
-            if previously_applied and previous_award:
-                group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) - previous_award)
 
             approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
             score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
             applied_points = score_delta if approved else 0
+
+            # 净值变更：只调整新旧积分的差值，一次操作完成
+            net_change = applied_points - previous_award
+            group_data["score_total"] = max(0, int(group_data.get("score_total", 0)) + net_change)
 
             target_record.update(
                 {
@@ -2481,9 +2560,6 @@ class BlindBoxPlugin(Star):
                     "awarded_points": applied_points,
                 }
             )
-
-            if approved:
-                group_data["score_total"] = int(group_data.get("score_total", 0)) + applied_points
 
             self._save_submission_records(group_no, records)
             await self._save_state()
