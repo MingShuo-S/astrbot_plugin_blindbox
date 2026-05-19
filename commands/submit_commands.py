@@ -49,14 +49,11 @@ async def handle_submit(
         yield plain_result_with_tip(plugin, event, "当前小组没有进行中的任务，请先抽取盲盒任务后再提交。")
         return
     
-    # 如果任务已过期（超过7天），也不允许提交
-    if task_overview.get("block_draw"):
+    # 已有待审核的提交时，不允许重复提交
+    review_status = str(task_overview.get("review_status", "")).strip().lower()
+    if review_status == "pending":
         summary_text = str(task_overview.get("summary_text", "")).strip()
-        block_message = str(task_overview.get("block_message", "")).strip()
-        message_parts = [summary_text] if summary_text else []
-        if block_message:
-            message_parts.append(block_message)
-        yield plain_result_with_tip(plugin, event, "\n\n".join(message_parts) if message_parts else block_message)
+        yield plain_result_with_tip(plugin, event, summary_text or "当前任务已提交，等待审核中，请勿重复提交。")
         return
 
     _msg_text, image_urls, images = extract_message_text_and_images(event)
