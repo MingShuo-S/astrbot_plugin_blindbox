@@ -164,7 +164,7 @@ async def handle_selection_response(
         f"建议积分：{draw_data.get('points', 0)} 分",
         "",
         f"当前小组：{group_no} - {group_data.get('group_name', '')}",
-        f"本周截止日期：{draw_data.get('drawn_at', '')} 起，一周内需完成",
+        f"截止时间：{draw_data.get('deadline', '')}（确认任务后七天内需完成）",
         "",
         "使用 /blindbox submit <任务说明> 来提交任务成果。",
     ]

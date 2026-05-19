@@ -532,15 +532,26 @@ class BlindBoxPlugin(Star):
                 "summary_text": "【当前盲盒任务】当前没有进行中的盲盒任务。",
             }
 
-        drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
-        drawn_at = None
-        if drawn_at_str:
+        deadline_str = str(draw_data.get("deadline", "")).strip()
+        deadline_dt = None
+        if deadline_str:
             try:
-                drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
             except Exception:
-                drawn_at = None
+                deadline_dt = None
 
-        if drawn_at and (now() - drawn_at) >= timedelta(days=7):
+        # 兼容旧数据：没有 deadline 字段时，用 drawn_at + 7 天
+        if deadline_dt is None:
+            drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
+            if drawn_at_str:
+                try:
+                    drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                    deadline_dt = drawn_at + timedelta(days=7)
+                    deadline_str = deadline_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+
+        if deadline_dt and now() >= deadline_dt:
             await self._clear_group_draw(group_no)
             return {
                 "has_active_draw": False,
@@ -548,12 +559,10 @@ class BlindBoxPlugin(Star):
                 "summary_text": "【当前盲盒任务】本周任务已满 7 天，已自动清除。",
             }
 
-        deadline_text = ""
+        deadline_text = deadline_str or "未知"
         remaining_text = "未知"
-        if drawn_at:
-            deadline = drawn_at + timedelta(days=7)
-            deadline_text = deadline.strftime("%Y-%m-%d %H:%M:%S")
-            remaining_seconds = max(0, int((deadline - now()).total_seconds()))
+        if deadline_dt:
+            remaining_seconds = max(0, int((deadline_dt - now()).total_seconds()))
             remaining_days = remaining_seconds // 86400
             remaining_hours = (remaining_seconds % 86400) // 3600
             remaining_text = f"{remaining_days}天{remaining_hours}小时"
@@ -931,6 +940,28 @@ class BlindBoxPlugin(Star):
             raise ValueError("submitter_qq 不能为空。")
         if not self._group_has_member(group_data, submitter_qq):
             raise ValueError("提交人必须是本组成员。")
+
+        # 检查当前任务是否已超时，超时则自动清除并拒绝提交
+        if isinstance(draw_data, dict):
+            deadline_str = str(draw_data.get("deadline", "")).strip()
+            deadline_dt = None
+            if deadline_str:
+                try:
+                    deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+            # 兼容旧数据：没有 deadline 字段时，用 drawn_at + 7 天
+            if deadline_dt is None:
+                drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
+                if drawn_at_str:
+                    try:
+                        drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                        deadline_dt = drawn_at + timedelta(days=7)
+                    except Exception:
+                        pass
+            if deadline_dt and now() >= deadline_dt:
+                await self._clear_group_draw(group_no)
+                raise ValueError("当前盲盒任务已超时，请重新抽取任务后再提交。")
 
         # 先构建记录，获取 submission_id
         submission = build_submission_record(

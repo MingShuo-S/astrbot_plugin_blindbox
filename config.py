@@ -3,7 +3,7 @@
 """
 
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -147,6 +147,11 @@ def batch_id(now_time: datetime | None = None) -> str:
 def timestamp(now_time: datetime | None = None) -> str:
     """获取时间戳字符串"""
     return (now_time or now()).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def deadline_timestamp(now_time: datetime | None = None) -> str:
+    """获取截止时间戳字符串（任务开始时间 + 7 天）"""
+    return ((now_time or now()) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def gen_uuid() -> str:

@@ -2,10 +2,10 @@
 盲盒任务抽取和选择模块
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from random import sample
 
-from ..config import batch_id, gen_uuid, now, timestamp, week_key
+from ..config import batch_id, deadline_timestamp, gen_uuid, now, timestamp, week_key
 
 from .storage import normalize_category, task_categories, unique_strings
 
@@ -171,6 +171,7 @@ async def confirm_selection(
         "title": str(selected_task["title"]),
         "points": int(selected_task["points"]),
         "drawn_at": timestamp(),
+        "deadline": deadline_timestamp(),
     }
     if "description" in selected_task:
         draw_data["description"] = str(selected_task["description"])
@@ -206,16 +207,27 @@ def can_draw_again(draw_data: dict[str, object] | None, records: list[dict[str, 
                     elif review_status == "pending":
                         return False, "上周任务仍在审核中，请等待审核结果"
 
-    # 检查是否超过一周（7天）
-    drawn_at_str = draw_data.get("drawn_at", "")
-    if drawn_at_str:
+    # 检查是否超过截止时间
+    deadline_str = str(draw_data.get("deadline", "")).strip()
+    deadline_dt = None
+    if deadline_str:
         try:
-            drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
-            time_elapsed = now() - drawn_at
-            if time_elapsed.total_seconds() > 7 * 24 * 3600:  # 7天
-                return True, "任务已超期，可以抽取新任务"
+            deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
         except Exception:
-            pass
+            deadline_dt = None
+
+    # 兼容旧数据：没有 deadline 字段时，用 drawn_at + 7 天
+    if deadline_dt is None:
+        drawn_at_str = draw_data.get("drawn_at", "")
+        if drawn_at_str:
+            try:
+                drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                deadline_dt = drawn_at + timedelta(days=7)
+            except Exception:
+                pass
+
+    if deadline_dt and now() > deadline_dt:
+        return True, "任务已超期，可以抽取新任务"
 
     # 都不满足条件，无法抽新任务
     return False, "本周任务未完成，无法抽取新任务。请先提交当前任务。"
