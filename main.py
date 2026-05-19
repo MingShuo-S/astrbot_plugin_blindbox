@@ -1120,6 +1120,8 @@ class BlindBoxPlugin(Star):
         """统一包装 Web API 结果"""
         try:
             result = await handler()
+            if isinstance(result, Response):
+                return result
             return self._json_success(result if result is not None else {})
         except ValueError as exc:
             return self._json_error(str(exc))
@@ -1511,6 +1513,30 @@ class BlindBoxPlugin(Star):
         payload = await self._get_request_json()
         group_no = str(payload.get("group_no", "")).strip()
         submitter_qq = str(payload.get("submitter_qq", "")).strip()
+        materials_text = str(payload.get("materials_text", "")).strip()
+        image_urls = _parse_qq_list(payload.get("image_urls", []))
+        images = payload.get("images", [])
+        source = str(payload.get("source", "command")).strip() or "command"
+
+        async def _handler():
+            image_entries = [image for image in images if isinstance(image, dict)]
+            return await self._create_submission_record(
+                group_no=group_no,
+                submitter_qq=submitter_qq,
+                materials_text=materials_text,
+                image_urls=image_urls,
+                images=[
+                    {
+                        "file": str(image.get("file", "")),
+                        "url": str(image.get("url", "")),
+                        "path": str(image.get("path", "")),
+                    }
+                    for image in image_entries
+                ],
+                source=source,
+            )
+
+        return await self._api_result(_handler)
 
     async def api_review_delete(self):
         """删除提交记录"""
@@ -1615,32 +1641,6 @@ class BlindBoxPlugin(Star):
                 "url": relative_url,
                 "filename": unique_name,
             }
-
-        return await self._api_result(_handler)
-
-    async def api_review_export_csv(self):
-        materials_text = str(payload.get("materials_text", "")).strip()
-        image_urls = _parse_qq_list(payload.get("image_urls", []))
-        images = payload.get("images", [])
-        source = str(payload.get("source", "manual")).strip() or "manual"
-
-        async def _handler():
-            image_entries = [image for image in images if isinstance(image, dict)]
-            return await self._create_submission_record(
-                group_no=group_no,
-                submitter_qq=submitter_qq,
-                materials_text=materials_text,
-                image_urls=image_urls,
-                images=[
-                    {
-                        "file": str(image.get("file", "")),
-                        "url": str(image.get("url", "")),
-                        "path": str(image.get("path", "")),
-                    }
-                    for image in image_entries
-                ],
-                source=source,
-            )
 
         return await self._api_result(_handler)
 
