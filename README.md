@@ -43,7 +43,8 @@
 - `/blindbox group request-dissolve <序号>`：组长申请解散小组。
 - `/blindbox group request-cancel <序号>`：组长取消解散申请。
 - `/blindbox submit <任务说明>`：成员提交任务材料，等待 AI 审核。
-- 在群里提交材料：仅通过命令 `/blindbox submit <任务说明>` 提交，命令会自动识别消息中的文字与图片并创建待审核记录。
+- `/blindbox gsubmit <任务说明>`：过期任务补交提交。盲盒任务超过 7 天截止后仍可补交，积分按原任务分 -1，提交后需管理员手动审核确认。
+- 在群里提交材料：仅通过命令 `/blindbox submit <任务说明>` 或 `/blindbox gsubmit <任务说明>` 提交，命令会自动识别消息中的文字与图片并创建待审核记录。
 - 在群里直接 @ 机器人不会触发提交。
 - `/blindbox group info <序号>`：查看小组信息和本周抽到的任务。
 - `/blindbox group list`：查看所有小组。
@@ -73,6 +74,7 @@
 - 提交后等待 AI 审核
 - 审核完成（通过或拒绝）后可以抽取下一个任务
 - 7 天未提交也可以重新抽取
+- 7 天超时后若任务实际已完成，可使用 `/blindbox gsubmit` 补交（积分 -1，需管理员审核通过）
 
 ### 任务不重复
 

@@ -27,6 +27,7 @@ def generate_commands_help() -> str:
         "",
         "📝 提交命令：",
         "  /blindbox submit <说明> - 提交任务材料（支持附带图片）",
+        "  /blindbox gsubmit <说明> - 过期任务补交（积分 -1，需管理员审核）",
         "  /blindbox me - 查看我的小组信息",
         "",
         "💾 导出命令：",
