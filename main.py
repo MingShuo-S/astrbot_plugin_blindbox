@@ -48,6 +48,7 @@ from .commands import (
     handle_draw,
     handle_export,
     handle_group_command,
+    handle_gsubmit,
     handle_selection_response,
     handle_submit,
     handle_whoami,
@@ -510,6 +511,14 @@ class BlindBoxPlugin(Star):
             draws.pop(str(group_no), None)
             await self._save_state()
 
+    async def _mark_group_draw_expired(self, group_no: str) -> None:
+        """标记小组盲盒任务为已过期，保留记录以备 gsubmit 补交"""
+        state = await self._get_state()
+        draws = state.get("draws", {})
+        if isinstance(draws, dict) and str(group_no) in draws:
+            draws[str(group_no)]["expired"] = True
+            await self._save_state()
+
     async def _build_current_group_task_overview(self, group_no: str) -> dict[str, object]:
         """构建当前小组盲盒任务的状态摘要"""
         state = await self._get_state()
@@ -552,11 +561,12 @@ class BlindBoxPlugin(Star):
                     pass
 
         if deadline_dt and now() >= deadline_dt:
-            await self._clear_group_draw(group_no)
+            await self._mark_group_draw_expired(group_no)
             return {
-                "has_active_draw": False,
+                "has_active_draw": True,
                 "block_draw": False,
-                "summary_text": "【当前盲盒任务】本周任务已满 7 天，已自动清除。",
+                "expired": True,
+                "summary_text": "【当前盲盒任务】本周任务已满 7 天，已过期。如需补交已完成的任务，请使用 /blindbox gsubmit。",
             }
 
         deadline_text = deadline_str or "未知"
@@ -953,43 +963,52 @@ class BlindBoxPlugin(Star):
         image_urls: list[str],
         images: list[dict[str, str]],
         source: str,
+        task_override: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        """创建提交记录"""
+        """创建提交记录
+
+        task_override: 手动指定 task_snapshot（gsubmit 补交时使用），跳过超时校验
+        """
         from .business.submission import build_submission_record
-        
+
         group_data = await self._ensure_group_or_raise(group_no)
-        state = await self._get_state()
-        draws = state.get("draws", {})
-        draw_data = draws.get(group_no) if isinstance(draws, dict) else None
 
         if not submitter_qq:
             raise ValueError("submitter_qq 不能为空。")
         if not self._group_has_member(group_data, submitter_qq):
             raise ValueError("提交人必须是本组成员。")
 
-        # 检查当前任务是否已超时，超时则自动清除并拒绝提交
-        if isinstance(draw_data, dict):
-            deadline_str = str(draw_data.get("deadline", "")).strip()
-            deadline_dt = None
-            if deadline_str:
-                try:
-                    deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    pass
-            # 兼容旧数据：没有 deadline 字段时，用 drawn_at + 7 天
-            if deadline_dt is None:
-                drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
-                if drawn_at_str:
+        if task_override is not None:
+            # gsubmit 路径：使用传入的 task_snapshot，不校验超时
+            effective_draw = task_override
+        else:
+            # 普通 submit 路径：从当前 draw 取值
+            state = await self._get_state()
+            draws = state.get("draws", {})
+            draw_data = draws.get(group_no) if isinstance(draws, dict) else None
+
+            if isinstance(draw_data, dict):
+                deadline_str = str(draw_data.get("deadline", "")).strip()
+                deadline_dt = None
+                if deadline_str:
                     try:
-                        drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
-                        deadline_dt = drawn_at + timedelta(days=7)
+                        deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
                     except Exception:
                         pass
-            if deadline_dt and now() >= deadline_dt:
-                await self._clear_group_draw(group_no)
-                raise ValueError("当前盲盒任务已超时，请重新抽取任务后再提交。")
+                if deadline_dt is None:
+                    drawn_at_str = str(draw_data.get("drawn_at", "")).strip()
+                    if drawn_at_str:
+                        try:
+                            drawn_at = datetime.strptime(drawn_at_str, "%Y-%m-%d %H:%M:%S")
+                            deadline_dt = drawn_at + timedelta(days=7)
+                        except Exception:
+                            pass
+                if deadline_dt and now() >= deadline_dt:
+                    await self._mark_group_draw_expired(group_no)
+                    raise ValueError("当前盲盒任务已超时，请重新抽取任务后再提交，或使用 /blindbox gsubmit 补交。")
 
-        # 先构建记录，获取 submission_id
+            effective_draw = draw_data if isinstance(draw_data, dict) else None
+
         submission = build_submission_record(
             group_no=group_no,
             group_data=group_data,
@@ -998,7 +1017,7 @@ class BlindBoxPlugin(Star):
             image_urls=image_urls,
             images=images,
             source=source,
-            draw_data=draw_data if isinstance(draw_data, dict) else None,
+            draw_data=effective_draw,
         )
         submission_id = str(submission["submission_id"])
 
@@ -2543,7 +2562,13 @@ class BlindBoxPlugin(Star):
             previous_award = int(target_record.get("awarded_points", 0))
 
             approved = verdict in {"approved", "accept", "pass", "ok", "通过"}
-            score_delta = int(draw_data.get("points", 0)) if isinstance(draw_data, dict) else 0
+            task_snapshot = target_record.get("task_snapshot", {})
+            if isinstance(task_snapshot, dict) and "points" in task_snapshot:
+                score_delta = int(task_snapshot.get("points", 0))
+            elif isinstance(draw_data, dict):
+                score_delta = int(draw_data.get("points", 0))
+            else:
+                score_delta = 0
             applied_points = score_delta if approved else 0
 
             # 净值变更：只调整新旧积分的差值，一次操作完成
@@ -2672,6 +2697,12 @@ class BlindBoxPlugin(Star):
         if head in {"submit", "submit-task", "提交", "交付"}:
             # 提交任务材料（文字/图片）
             async for result in handle_submit(self, event, tokens[1:]):
+                yield result
+            return
+
+        if head in {"gsubmit", "g提交", "小组提交", "补交"}:
+            # 过期任务补交
+            async for result in handle_gsubmit(self, event, tokens[1:]):
                 yield result
             return
 
