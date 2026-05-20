@@ -276,6 +276,36 @@ textarea {
   line-height: 1.7;
 }
 
+.task-block {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.task-overview {
+  margin: 0;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+  font-size: 0.88rem;
+}
+
+.task-overview--empty {
+  color: var(--muted);
+}
+
+.task-editor select {
+  min-width: 0;
+}
+
 .group-badge {
   padding: 6px 10px;
   border-radius: 999px;

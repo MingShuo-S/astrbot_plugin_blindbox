@@ -324,6 +324,7 @@ class BlindBoxPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/group/dissolve", self.api_group_dissolve, ["POST"], "解散小组")
         context.register_web_api(f"/{PLUGIN_NAME}/group/set-score", self.api_group_set_score, ["POST"], "设置小组积分")
         context.register_web_api(f"/{PLUGIN_NAME}/group/redraw", self.api_group_redraw, ["POST"], "重抽小组任务")
+        context.register_web_api(f"/{PLUGIN_NAME}/group/update-current-task", self.api_group_update_current_task, ["POST"], "更新小组当前任务")
         context.register_web_api(f"/{PLUGIN_NAME}/group/export-csv", self.api_group_export_csv, ["GET"], "导出小组列表为CSV")
         context.register_web_api(f"/{PLUGIN_NAME}/group/import-csv", self.api_group_import_csv, ["POST"], "从CSV导入小组列表")
 
@@ -1183,13 +1184,19 @@ class BlindBoxPlugin(Star):
         async def _handler():
             state = await self._get_state()
             tasks = await self._get_tasks()
+            groups = state.get("groups", {})
+            task_overviews: dict[str, object] = {}
+            if isinstance(groups, dict):
+                for group_no in sorted(groups.keys(), key=str):
+                    task_overviews[str(group_no)] = await self._build_current_group_task_overview(str(group_no))
             return {
                 "week": week_key(),
                 "rules_text": str(self.config.get("rules_text", DEFAULT_RULES_TEXT)),
                 "tasks": tasks,
                 "categories": _task_categories(tasks),
-                "groups": state.get("groups", {}),
+                "groups": groups,
                 "draws": state.get("draws", {}),
+                "task_overviews": task_overviews,
             }
 
         return await self._api_result(_handler)
@@ -1851,6 +1858,63 @@ class BlindBoxPlugin(Star):
             
             pick_result = blindbox_ops.pick_three_tasks(category or "", selected_tasks, exclude_task)
             return pick_result
+
+        return await self._api_result(_handler)
+
+    async def api_group_update_current_task(self):
+        """更新小组当前任务内容"""
+        payload = await self._get_request_json()
+        group_no = str(payload.get("group_no", "")).strip()
+        task_index_raw = payload.get("task_index", "")
+
+        async def _handler():
+            if not group_no:
+                raise ValueError("group_no 不能为空。")
+
+            task_index = _safe_int(task_index_raw, -1)
+            if task_index < 0:
+                raise ValueError("task_index 不能为空。")
+
+            state = await self._get_state()
+            groups = state.get("groups", {})
+            draws = state.get("draws", {})
+            tasks = await self._get_tasks()
+
+            if not isinstance(groups, dict) or not isinstance(draws, dict):
+                raise ValueError("小组数据异常，请重新初始化插件状态。")
+
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                raise ValueError(f"序号为 {group_no} 的小组不存在。")
+
+            draw_data = draws.get(group_no)
+            if not isinstance(draw_data, dict):
+                raise ValueError("该小组当前没有进行中的任务，不能直接修改任务内容。")
+
+            active_tasks = [task for task in tasks if task.get("enabled", True)]
+            if task_index >= len(active_tasks):
+                raise ValueError("所选任务不存在或已被禁用。")
+
+            selected_task = active_tasks[task_index]
+            updated_draw = dict(draw_data)
+            updated_draw["category"] = str(selected_task.get("category", "")).strip()
+            updated_draw["title"] = str(selected_task.get("title", "")).strip()
+            updated_draw["points"] = _safe_int(selected_task.get("points", 0), 0)
+
+            description = str(selected_task.get("description", "")).strip()
+            if description:
+                updated_draw["description"] = description
+            else:
+                updated_draw.pop("description", None)
+
+            draws[group_no] = updated_draw
+            await self._save_state()
+            return {
+                "group_no": group_no,
+                "group_name": str(group_data.get("group_name", "")),
+                "task_index": task_index,
+                "draw": updated_draw,
+            }
 
         return await self._api_result(_handler)
 

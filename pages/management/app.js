@@ -84,13 +84,58 @@ function renderStats(data) {
     .join("");
 }
 
-function groupDrawText(groupNo, data) {
-  const draw = data.draws?.[groupNo];
+function getActiveTasks(data) {
+  return Array.isArray(data.tasks) ? data.tasks.filter((task) => task && task.enabled !== false) : [];
+}
+
+function findTaskIndex(tasks, draw) {
   if (!draw) {
-    return "本周还没有抽取任务。";
+    return -1;
   }
 
-  return `本周任务：${draw.category} - ${draw.title} ｜ ${draw.points} 分 ｜ ${draw.week}`;
+  return tasks.findIndex(
+    (task) =>
+      String(task.category || "") === String(draw.category || "") &&
+      String(task.title || "") === String(draw.title || "") &&
+      String(task.points || 0) === String(draw.points || 0),
+  );
+}
+
+function renderTaskOptions(tasks, selectedIndex) {
+  if (!tasks.length) {
+    return '<option value="">暂无可选任务</option>';
+  }
+
+  return [
+    '<option value="">-- 从任务列表中选择 --</option>',
+    ...tasks.map(
+      (task, index) =>
+        `<option value="${index}"${index === selectedIndex ? " selected" : ""}>${escapeText(task.category || "未分类")} - ${escapeText(task.title || "未命名")}（${escapeText(task.points || 0)} 分）</option>`,
+    ),
+  ].join("");
+}
+
+function renderTaskOverview(data, groupNo) {
+  const overview = data.task_overviews?.[groupNo];
+  if (overview && typeof overview.summary_text === "string" && overview.summary_text.trim()) {
+    return `<pre class="task-overview">${escapeText(overview.summary_text)}</pre>`;
+  }
+
+  const draw = data.draws?.[groupNo];
+  if (!draw) {
+    return '<div class="task-overview task-overview--empty">当前没有进行中的任务。</div>';
+  }
+
+  const lines = [
+    "【当前盲盒任务】",
+    "状态：信息尚未加载",
+    `分类：${draw.category || ""}`,
+    `任务：${draw.title || ""}`,
+    `建议积分：${draw.points || 0} 分`,
+    `抽取时间：${draw.drawn_at || "未知"}`,
+    `截止时间：${draw.deadline || "未知"}`,
+  ];
+  return `<pre class="task-overview">${escapeText(lines.join("\n"))}</pre>`;
 }
 
 function renderMemberOptions(members, selectedValue) {
@@ -119,6 +164,7 @@ function downloadJson(filename, payload) {
 function renderGroups(data) {
   const groups = data.groups || {};
   const entries = Object.values(groups);
+  const tasks = getActiveTasks(data);
 
   if (!entries.length) {
     groupsEl.innerHTML = `
@@ -136,10 +182,15 @@ function renderGroups(data) {
       const members = Array.isArray(group.members) ? group.members : [];
       const leader = group.leader_qq || members[0] || "未设置";
       const scoreTotal = Number(group.score_total || 0);
+      const draw = data.draws?.[group.group_no];
+      const currentTaskIndex = findTaskIndex(tasks, draw);
+      const hasActiveDraw = Boolean(draw);
       const requestBadge = group.dissolve_requested ? '<span class="group-badge warn">已申请解散</span>' : "";
       const membersText = members.length ? members.join("、") : "无";
       const transferDisabled = members.length ? "" : "disabled";
       const transferOptions = renderMemberOptions(members, leader);
+      const taskOptions = renderTaskOptions(tasks, currentTaskIndex);
+      const taskDisabled = hasActiveDraw ? "" : "disabled";
       const dissolveAction = group.dissolve_requested
         ? '<button class="secondary" data-action="cancel-dissolve">取消解散申请</button>'
         : '<button class="secondary" data-action="request-dissolve">申请解散</button>';
@@ -153,6 +204,18 @@ function renderGroups(data) {
               <div class="group-score">当前积分：<strong>${escapeText(Number.isFinite(scoreTotal) ? scoreTotal : 0)}</strong></div>
             </div>
             ${requestBadge}
+          </div>
+
+          <div class="task-block">
+            <div class="section-title">小组目前任务</div>
+            ${renderTaskOverview(data, String(group.group_no))}
+            <div class="inline-form inline-form--wide task-editor">
+              <select data-task-select ${taskDisabled}>
+                ${taskOptions}
+              </select>
+              <button class="ghost" data-action="task-update" ${taskDisabled}>更新当前任务</button>
+            </div>
+            <div class="hint">更新任务只会替换当前任务内容，不会改动抽取时间或截止时间；没有当前任务的小组不会自动分配。</div>
           </div>
 
           <div class="inline-form">
@@ -204,6 +267,7 @@ function renderGroups(data) {
       const addInput = card.querySelector("[data-add-input]");
       const removeInput = card.querySelector("[data-remove-input]");
       const transferSelect = card.querySelector("[data-transfer-select]");
+      const taskSelect = card.querySelector("[data-task-select]");
       const renameInput = card.querySelector("[data-rename-input]");
       const scoreInput = card.querySelector("[data-score-input]");
 
@@ -227,6 +291,12 @@ function renderGroups(data) {
         } else if (action === "transfer") {
           const newLeaderQq = String(transferSelect.value || "").trim();
           await callApi("group/transfer-leader", { group_no: groupNo, new_leader_qq: newLeaderQq });
+        } else if (action === "task-update") {
+          const taskIndex = String(taskSelect.value || "").trim();
+          if (!taskIndex && taskIndex !== "0") {
+            throw new Error("请选择一个任务");
+          }
+          await callApi("group/update-current-task", { group_no: groupNo, task_index: taskIndex });
         } else if (action === "rename") {
           const newGroupName = String(renameInput.value || "").trim();
           if (!newGroupName) {
