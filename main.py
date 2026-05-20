@@ -2590,29 +2590,20 @@ class BlindBoxPlugin(Star):
         return export_ops.export_group_zip(group_dir, EXPORT_DIR, group_no)
 
     # =========================================================================
-    # 注意：以下命令处理方法已迁移到 commands/ 模块
-    # - _handle_group_command → commands/group_commands.py
-    # - _handle_whoami → commands/whoami_commands.py  
-    # - _handle_draw → commands/draw_commands.py
-    # - _handle_selection_response → commands/draw_commands.py
-    # - _handle_submit → commands/submit_commands.py
-    # - _handle_export → commands/export_commands.py
-    # =========================================================================
-
-    # =========================================================================
     # 事件处理（消息命令等）
     # =========================================================================
 
 
-    # =========================================================================
-    # 注意：以下命令处理方法已迁移到 commands/ 模块
-    # - _handle_group_command → commands/group_commands.py
-    # - _handle_whoami → commands/whoami_commands.py  
-    # - _handle_draw → commands/draw_commands.py
-    # - _handle_selection_response → commands/draw_commands.py
-    # - _handle_submit → commands/submit_commands.py
-    # - _handle_export → commands/export_commands.py
-    # =========================================================================
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=5)
+    async def handle_selection_choice(self, event: AstrMessageEvent):
+        """处理用户的任务选择回复（1/2/3）"""
+        try:
+            text = event.message_str.strip()
+            if text in {"1", "2", "3"}:
+                async for result in handle_selection_response(self, event, text):
+                    yield result
+        except Exception:
+            pass
 
     @filter.command("blindbox")
     async def blindbox(self, event: AstrMessageEvent):
