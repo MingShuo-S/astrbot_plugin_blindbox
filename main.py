@@ -60,6 +60,7 @@ from .config import (
     KV_STATE_KEY,
     TASK_CATEGORIES,
     batch_id,
+    deadline_timestamp,
     default_state,
     gen_uuid,
     now,
@@ -1844,20 +1845,39 @@ class BlindBoxPlugin(Star):
         async def _handler():
             state = await self._get_state()
             tasks = await self._get_tasks()
+
+            # 验证小组存在
+            groups = state.get("groups", {})
+            group_data = groups.get(group_no)
+            if not isinstance(group_data, dict):
+                raise ValueError(f"序号为 {group_no} 的小组不存在。")
+
+            # 排除当前任务，随机选一个新的
             exclude_task = state.get("draws", {}).get(group_no)
-            
-            if not category:
-                category = "随机" if tasks else ""
-            
-            selected_tasks = [t for t in tasks if t.get("enabled", True)]
-            if category and category != "随机":
-                selected_tasks = [t for t in selected_tasks if t.get("category") == category]
-            
-            if not selected_tasks:
-                raise ValueError("没有可用的任务。")
-            
-            pick_result = blindbox_ops.pick_three_tasks(category or "", selected_tasks, exclude_task)
-            return pick_result
+            normalized_cat = category if category else "全部"
+            new_task = blindbox_ops.pick_task(normalized_cat, tasks, exclude_task)
+
+            # 构建完整的 draw 记录并保存到状态
+            draws = state.setdefault("draws", {})
+            draw_data = {
+                "week": week_key(),
+                "batch_id": batch_id(),
+                "draw_count": 1,
+                "group_no": str(group_no),
+                "group_name": str(group_data.get("group_name", "")),
+                "category": str(new_task["category"]),
+                "title": str(new_task["title"]),
+                "points": int(new_task.get("points", 0)),
+                "drawn_at": timestamp(),
+                "deadline": deadline_timestamp(),
+            }
+            if "description" in new_task:
+                draw_data["description"] = str(new_task["description"])
+
+            draws[str(group_no)] = draw_data
+            await self._save_state()
+
+            return {"message": f"小组 {group_no} 已重抽任务", "draw": draw_data}
 
         return await self._api_result(_handler)
 

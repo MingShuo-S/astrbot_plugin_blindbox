@@ -3,7 +3,7 @@
 """
 
 from datetime import datetime, timedelta
-from random import sample
+from random import choice, sample
 
 from ..config import batch_id, deadline_timestamp, gen_uuid, now, timestamp, week_key
 
@@ -33,7 +33,7 @@ def pick_task(
     if not active_tasks:
         raise ValueError("没有可用的盲盒任务，请先在插件配置里添加任务。")
 
-    return active_tasks[0] if len(active_tasks) == 1 else active_tasks[0]
+    return active_tasks[0] if len(active_tasks) == 1 else choice(active_tasks)
 
 
 async def pick_three_tasks(
