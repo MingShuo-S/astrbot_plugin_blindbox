@@ -2798,6 +2798,9 @@ class BlindBoxPlugin(Star):
 
         if head in {"pass", "approve", "通过"}:
             # 管理员确认通过审核
+            if not event.is_admin():
+                yield event.plain_result("仅群管理员可以审核任务提交。")
+                return
             if len(tokens) < 2:
                 yield event.plain_result(self._append_tip("用法：/blindbox pass <提交编号>"))
                 return
@@ -2808,6 +2811,9 @@ class BlindBoxPlugin(Star):
 
         if head in {"deny", "reject", "拒绝", "驳回"}:
             # 管理员确认拒绝审核
+            if not event.is_admin():
+                yield event.plain_result("仅群管理员可以审核任务提交。")
+                return
             if len(tokens) < 2:
                 yield event.plain_result(self._append_tip("用法：/blindbox deny <提交编号>"))
                 return
